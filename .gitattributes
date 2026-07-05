@@ -1,0 +1,5 @@
+* text=auto
+*.rs text eol=lf
+# Fixture contents are content-hashed by tests; keep byte-stable on checkout.
+crates/skills-cli/tests/fixtures/** text eol=lf
+crates/skills-cli/tests/snapshots/** text eol=lf

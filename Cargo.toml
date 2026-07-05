@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/skills-core",
+    "crates/skills-providers",
+    "crates/skills-audit",
+    "crates/skills-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "BSD-3-Clause"
+repository = "https://github.com/zed-skills/ai-skills"
+
+[workspace.dependencies]
+skills-core = { path = "crates/skills-core" }
+skills-providers = { path = "crates/skills-providers" }
+skills-audit = { path = "crates/skills-audit" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync"] }
+async-trait = "0.1"
+clap = { version = "4", features = ["derive"] }
+tempfile = "3"
+insta = { version = "1", features = ["json"] }
+wiremock = "0.6"
+walkdir = "2"
+assert_cmd = "2"
+
+[profile.release]
+lto = "thin"
