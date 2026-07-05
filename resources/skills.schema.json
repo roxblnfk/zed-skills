@@ -1,0 +1,181 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://raw.githubusercontent.com/zed-skills/ai-skills/main/resources/skills.schema.json",
+    "title": "skills.json",
+    "description": "Project manifest for the `skills` CLI (schema v2). Unknown top-level keys are fatal.",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+        "$schema": {
+            "type": "string"
+        },
+        "target": {
+            "description": "Directory (relative to the project root) skills are synced into.",
+            "type": "string",
+            "minLength": 1,
+            "default": ".agents/skills"
+        },
+        "aliases": {
+            "description": "Additional link locations mirroring the target (symlink on POSIX, junction on Windows). Must be unique and must not equal the target.",
+            "type": "array",
+            "items": {
+                "type": "string",
+                "minLength": 1
+            },
+            "uniqueItems": true
+        },
+        "trusted": {
+            "description": "Trusted vendor patterns: 'vendor/package' or 'vendor/*'.",
+            "type": "array",
+            "items": {
+                "type": "string",
+                "pattern": "^[^/]+/[^/]+$"
+            }
+        },
+        "trusted-replace": {
+            "description": "When true, only the project 'trusted' list applies (builtin list and direct-dependency trust are disabled).",
+            "type": "boolean",
+            "default": false
+        },
+        "discovery": {
+            "description": "Gates the recursive-fallback skill locator.",
+            "type": "boolean",
+            "default": false
+        },
+        "local": {
+            "description": "Local provider toggles.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "composer": {
+                    "type": "boolean"
+                },
+                "dir": {
+                    "description": "Directories whose immediate subdirectories containing SKILL.md are skills. Each entry is one donor.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "uniqueItems": true
+                },
+                "npm": {
+                    "description": "Reserved.",
+                    "type": "boolean"
+                },
+                "go": {
+                    "description": "Reserved.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "remote": {
+            "description": "Remote donors: by-package (github/gitlab) or by-url (http/zip).",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "from": {
+                        "enum": ["github", "gitlab", "http", "zip"]
+                    },
+                    "package": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "url": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "host": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "ref": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "sha256": {
+                        "type": "string"
+                    },
+                    "skills": {
+                        "description": "Tri-state: absent/null = all skills; [] = donor registered, pulls nothing; non-empty = allowlist matched by canonical skill name.",
+                        "type": ["array", "null"],
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                },
+                "required": ["from"],
+                "allOf": [
+                    {
+                        "if": {
+                            "properties": {
+                                "from": {
+                                    "enum": ["github", "gitlab"]
+                                }
+                            }
+                        },
+                        "then": {
+                            "required": ["package"],
+                            "properties": {
+                                "url": false,
+                                "sha256": false
+                            }
+                        }
+                    },
+                    {
+                        "if": {
+                            "properties": {
+                                "from": {
+                                    "enum": ["http", "zip"]
+                                }
+                            }
+                        },
+                        "then": {
+                            "required": ["url"],
+                            "properties": {
+                                "package": false,
+                                "host": false,
+                                "ref": false
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+        "audit": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "mode": {
+                    "enum": ["off", "warn", "block"],
+                    "default": "off"
+                },
+                "pipeline": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "use": {
+                                "type": "string",
+                                "minLength": 1
+                            },
+                            "on-fail": {
+                                "enum": ["warn", "block"]
+                            }
+                        },
+                        "required": ["use"]
+                    }
+                }
+            }
+        },
+        "path-from-root": {
+            "description": "Monorepo re-anchor: relative path with plain segments only (no '.'/'..').",
+            "type": "string",
+            "minLength": 1
+        }
+    }
+}
