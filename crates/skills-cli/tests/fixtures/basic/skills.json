@@ -1,0 +1,6 @@
+{
+    "target": ".agents/skills",
+    "local": {
+        "dir": ["./skills-src"]
+    }
+}

@@ -1,0 +1,12 @@
+---
+source: crates/skills-cli/tests/e2e_bin.rs
+expression: out
+---
+Dry run: would sync skills into .agents/skills (no files will be written)
+
+dir/skills-src:
+  [add]  code-review (would copy 3 files)
+  [add]  docs-helper (would copy 1 file)
+  [add]  plain (would copy 1 file)
+
+3 added, 0 updated, 0 removed, 0 up to date.

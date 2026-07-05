@@ -1,0 +1,47 @@
+---
+source: crates/skills-cli/tests/e2e_sync.rs
+expression: "common::redact_lock(&lock_raw)"
+---
+{
+  "version": 1,
+  "skills": [
+    {
+      "id": "code-review",
+      "vendor": "dir/skills-src",
+      "origin": {
+        "type": "local",
+        "path": "./skills-src"
+      },
+      "content_hash": "[hash]",
+      "files": [
+        "SKILL.md",
+        "references/checklist.md",
+        "scripts/run.ps1"
+      ]
+    },
+    {
+      "id": "docs-helper",
+      "vendor": "dir/skills-src",
+      "origin": {
+        "type": "local",
+        "path": "./skills-src"
+      },
+      "content_hash": "[hash]",
+      "files": [
+        "SKILL.md"
+      ]
+    },
+    {
+      "id": "plain",
+      "vendor": "dir/skills-src",
+      "origin": {
+        "type": "local",
+        "path": "./skills-src"
+      },
+      "content_hash": "[hash]",
+      "files": [
+        "SKILL.md"
+      ]
+    }
+  ]
+}

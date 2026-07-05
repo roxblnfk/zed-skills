@@ -1,0 +1,12 @@
+---
+source: crates/skills-cli/tests/e2e_bin.rs
+expression: out
+---
+Syncing skills into .agents/skills
+
+dir/skills-src:
+  [add]  code-review (copied 3 files)
+  [add]  docs-helper (copied 1 file)
+  [add]  plain (copied 1 file)
+
+3 added, 0 updated, 0 removed, 0 up to date.

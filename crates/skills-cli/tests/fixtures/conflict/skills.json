@@ -1,0 +1,5 @@
+{
+    "local": {
+        "dir": ["./vendor-a", "./vendor-b"]
+    }
+}

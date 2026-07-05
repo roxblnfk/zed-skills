@@ -1,0 +1,10 @@
+---
+source: crates/skills-cli/tests/e2e_bin.rs
+expression: out
+---
+Target: .agents/skills
+
+dir/skills-src:
+  code-review  Reviews code changes before commit  [ok]
+  docs-helper  Writes documentation                [ok]
+  plain        -                                   [ok]

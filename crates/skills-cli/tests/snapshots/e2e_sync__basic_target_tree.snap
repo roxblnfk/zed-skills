@@ -1,0 +1,9 @@
+---
+source: crates/skills-cli/tests/e2e_sync.rs
+expression: "tree_listing(&target).join(\"\\n\")"
+---
+code-review/SKILL.md
+code-review/references/checklist.md
+code-review/scripts/run.ps1
+docs-helper/SKILL.md
+plain/SKILL.md

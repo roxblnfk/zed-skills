@@ -1,0 +1,10 @@
+---
+source: crates/skills-cli/tests/e2e_bin.rs
+expression: out
+---
+Target: .agents/skills
+
+dir/skills-src:
+  code-review  Reviews code changes before commit  not-synced
+  docs-helper  Writes documentation                not-synced
+  plain        -                                   not-synced
