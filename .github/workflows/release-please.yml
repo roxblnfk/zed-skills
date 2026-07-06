@@ -38,7 +38,7 @@ jobs:
       - name: Sync Cargo.lock into the release PR
         if: ${{ steps.rp.outputs.prs_created == 'true' }}
         env:
-          PR_BRANCH: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
+          PR_BRANCH: ${{ steps.rp.outputs.pr != '' && fromJSON(steps.rp.outputs.pr).headBranchName || '' }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
