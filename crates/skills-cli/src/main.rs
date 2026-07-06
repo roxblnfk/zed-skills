@@ -38,9 +38,34 @@ enum Command {
         /// Override the sync target from skills.json.
         #[arg(long, value_name = "PATH")]
         target: Option<String>,
+        /// Only run the named provider (dir, github, gitlab, url).
+        #[arg(long, value_name = "ID")]
+        from: Option<String>,
+        /// Delete matching cache entries and re-download remote archives.
+        #[arg(long)]
+        refresh: bool,
     },
     /// List donors and skills with their sync status. Read-only.
-    Show,
+    Show {
+        /// Only show donors of the named provider (dir, github, gitlab, url).
+        #[arg(long, value_name = "ID")]
+        from: Option<String>,
+    },
+    /// Register a remote donor in skills.json and sync it immediately.
+    Add {
+        /// `github:owner/repo`, `gitlab:group/project` or a repository URL
+        /// (https / ssh / scp form).
+        input: String,
+        /// Exact ref (tag, branch, SHA) or caret constraint (`^1.2`).
+        #[arg(long, value_name = "REF")]
+        r#ref: Option<String>,
+        /// Allowlist of skill (canonical) names to sync; repeatable.
+        #[arg(long = "skill", value_name = "NAME")]
+        skills: Vec<String>,
+        /// Self-hosted GitHub/GitLab host (e.g. gitlab.example.com).
+        #[arg(long, value_name = "HOST")]
+        host: Option<String>,
+    },
 }
 
 /// A command failure carrying its exit code (spec §10: 0 ok, 1 usage/config,
@@ -54,6 +79,14 @@ impl CliError {
     fn config(message: impl Into<String>) -> Self {
         CliError {
             code: 1,
+            message: message.into(),
+        }
+    }
+
+    /// Network / provider failure (exit code 4).
+    fn provider(message: impl Into<String>) -> Self {
+        CliError {
+            code: 4,
             message: message.into(),
         }
     }
@@ -105,8 +138,19 @@ async fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::Init { force } => commands::init::run(&cwd, force),
-        Command::Update { dry_run, target } => commands::update::run(&cwd, dry_run, target).await,
-        Command::Show => commands::show::run(&cwd).await,
+        Command::Update {
+            dry_run,
+            target,
+            from,
+            refresh,
+        } => commands::update::run(&cwd, dry_run, target, from, refresh).await,
+        Command::Show { from } => commands::show::run(&cwd, from).await,
+        Command::Add {
+            input,
+            r#ref,
+            skills,
+            host,
+        } => commands::add::run(&cwd, &input, r#ref, skills, host).await,
     };
 
     match result {

@@ -10,10 +10,11 @@ use crate::CliError;
 use crate::render::{self, ShowLine, ShowVendor};
 
 /// Read-only report: donors, their skills, sync status against the lockfile.
-pub async fn run(cwd: &Path) -> Result<(), CliError> {
+pub async fn run(cwd: &Path, from: Option<String>) -> Result<(), CliError> {
     let ctx = prepare(cwd, PrepareOptions::default()).map_err(PipelineError::from)?;
 
-    let refs = discover::discover(&ctx, &super::providers())
+    let providers = super::providers(from.as_deref())?;
+    let refs = discover::discover(&ctx, &providers)
         .await
         .map_err(PipelineError::from)?;
     let refs = trust::trust_filter(&ctx, refs);

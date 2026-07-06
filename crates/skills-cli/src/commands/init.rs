@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use skills_core::manifest::MANIFEST_NAME;
+use skills_core::pipeline::ctx::CACHE_DIR;
 
 use crate::CliError;
 
@@ -23,5 +24,38 @@ pub fn run(cwd: &Path, force: bool) -> Result<(), CliError> {
     std::fs::write(&path, STUB)
         .map_err(|e| CliError::config(format!("cannot write {MANIFEST_NAME}: {e}")))?;
     println!("Wrote {MANIFEST_NAME}");
+    ensure_cache_gitignored(cwd)?;
+    Ok(())
+}
+
+/// Make sure the archive cache dir is gitignored: create `.gitignore` with
+/// the entry, or append it to an existing one that lacks it.
+fn ensure_cache_gitignored(cwd: &Path) -> Result<(), CliError> {
+    let entry = format!("{CACHE_DIR}/");
+    let path = cwd.join(".gitignore");
+    let write_err = |e: std::io::Error| CliError::config(format!("cannot write .gitignore: {e}"));
+
+    if !path.exists() {
+        std::fs::write(&path, format!("{entry}\n")).map_err(write_err)?;
+        println!("Wrote .gitignore ({entry})");
+        return Ok(());
+    }
+    let existing = std::fs::read_to_string(&path)
+        .map_err(|e| CliError::config(format!("cannot read .gitignore: {e}")))?;
+    let already_ignored = existing
+        .lines()
+        .map(str::trim)
+        .any(|line| line == entry || line == CACHE_DIR);
+    if already_ignored {
+        return Ok(());
+    }
+    let mut updated = existing;
+    if !updated.is_empty() && !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated.push_str(&entry);
+    updated.push('\n');
+    std::fs::write(&path, updated).map_err(write_err)?;
+    println!("Updated .gitignore ({entry})");
     Ok(())
 }

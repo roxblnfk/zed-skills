@@ -12,10 +12,11 @@ skills-providers.workspace = true
 skills-audit.workspace = true
 clap.workspace = true
 tokio.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true
 insta.workspace = true
 tempfile.workspace = true
-serde_json.workspace = true
 walkdir.workspace = true
+wiremock.workspace = true
