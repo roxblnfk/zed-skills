@@ -3,6 +3,7 @@
 
 use skills_core::audit::Severity;
 use skills_core::domain::{Note, NoteKind};
+use skills_core::link::LinkStatus;
 use skills_core::lockfile::SyncStatus;
 use skills_core::manifest::AuditMode;
 use skills_core::pipeline::{SyncAction, SyncReport};
@@ -83,6 +84,36 @@ pub fn render_update(report: &SyncReport) -> String {
             report.count(SyncAction::Remove),
             report.count(SyncAction::Skip),
         ));
+    }
+
+    // Alias links, emitted after the copy report (SPEC §10).
+    if !report.aliases.is_empty() {
+        out.push_str("\nAliases:\n");
+        for alias in &report.aliases {
+            let line = match alias.status {
+                LinkStatus::Created => {
+                    format!(
+                        "[link]       {} -> {} (created)",
+                        alias.alias_rel, alias.target_rel
+                    )
+                }
+                LinkStatus::AlreadyCorrect => format!(
+                    "[link]       {} -> {} (already linked)",
+                    alias.alias_rel, alias.target_rel
+                ),
+                LinkStatus::WouldCreate => {
+                    format!("[would link] {} -> {}", alias.alias_rel, alias.target_rel)
+                }
+                LinkStatus::Failed => {
+                    let reason = alias.reason.as_deref().unwrap_or("unknown error");
+                    format!(
+                        "[link fail]  {} -> {}: {reason}",
+                        alias.alias_rel, alias.target_rel
+                    )
+                }
+            };
+            out.push_str(&format!("  {line}\n"));
+        }
     }
 
     if !report.notes.is_empty() {

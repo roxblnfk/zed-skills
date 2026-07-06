@@ -46,6 +46,8 @@ pub enum PrepareError {
     Lockfile(#[from] LockfileError),
     #[error("invalid --target value: {0}")]
     InvalidTarget(String),
+    #[error("invalid alias: {0}")]
+    InvalidAlias(String),
 }
 
 /// Discover stage failure.

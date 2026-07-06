@@ -6,6 +6,7 @@ pub mod domain;
 pub mod error;
 pub mod frontmatter;
 pub mod fsutil;
+pub mod link;
 pub mod lockfile;
 pub mod manifest;
 pub mod paths;
@@ -24,6 +25,7 @@ pub use error::{
     DiscoverError, LockfileError, ManifestError, MaterializeError, PipelineError, PrepareError,
     ResolveError, ScanError, SyncError, TrustError,
 };
+pub use link::{LinkOutcome, LinkStatus};
 pub use lockfile::{AuditCacheEntry, LockedSkill, Lockfile, SyncStatus};
 pub use manifest::{
     AuditConfig, AuditMode, AuditStep, DEFAULT_TARGET, HttpStep, LlmStep, MANIFEST_NAME, Manifest,

@@ -43,6 +43,11 @@ enum Command {
         /// Override the sync target from skills.json.
         #[arg(long, value_name = "PATH")]
         target: Option<String>,
+        /// Extra path to mirror the target into as a junction (Windows) or
+        /// symlink (POSIX). Repeatable; passing it at all replaces the
+        /// project `aliases` entirely (no merge).
+        #[arg(long = "alias", value_name = "PATH")]
+        alias: Vec<String>,
         /// Only run the named provider (dir, composer, github, gitlab, url).
         #[arg(long, value_name = "ID")]
         from: Option<String>,
@@ -171,6 +176,7 @@ async fn main() -> ExitCode {
             packages,
             dry_run,
             target,
+            alias,
             from,
             refresh,
             re_audit,
@@ -181,6 +187,7 @@ async fn main() -> ExitCode {
                 &cwd,
                 dry_run,
                 target,
+                alias,
                 from,
                 refresh,
                 re_audit,

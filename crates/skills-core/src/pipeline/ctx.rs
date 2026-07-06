@@ -1,6 +1,7 @@
 //! Prepare stage: load manifest + lockfile, resolve the target, set up the
 //! run context.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::error::PrepareError;
@@ -44,6 +45,10 @@ pub struct Ctx {
     pub target_rel: String,
     /// Absolute target directory.
     pub target_abs: PathBuf,
+    /// Effective aliases (normalized, `/`-separated, relative to the project
+    /// root). Each is mirrored to the target via a junction / symlink after
+    /// the copy step. CLI `--alias` replaces the manifest list entirely.
+    pub aliases: Vec<String>,
     pub cache: Cache,
     pub dry_run: bool,
     pub run: RunOptions,
@@ -68,6 +73,9 @@ impl Ctx {
 pub struct PrepareOptions {
     /// CLI `--target` override; beats the manifest value.
     pub target_override: Option<String>,
+    /// CLI `--alias` override. `Some(_)` (even empty) replaces the manifest
+    /// `aliases` entirely; `None` defers to the manifest.
+    pub alias_override: Option<Vec<String>>,
     pub dry_run: bool,
     /// CLI `--refresh`: force re-download of cached remote archives.
     pub refresh: bool,
@@ -86,12 +94,15 @@ pub fn prepare(project_root: &Path, options: PrepareOptions) -> Result<Ctx, Prep
     };
     let target_abs = project_root.join(rel_to_path(&target_rel));
 
+    let aliases = resolve_aliases(&manifest, &options.alias_override, &target_rel)?;
+
     Ok(Ctx {
         project_root: project_root.to_path_buf(),
         manifest,
         lockfile,
         target_rel,
         target_abs,
+        aliases,
         cache: Cache {
             root: project_root.join(CACHE_DIR),
             refresh: options.refresh,
@@ -99,6 +110,41 @@ pub fn prepare(project_root: &Path, options: PrepareOptions) -> Result<Ctx, Prep
         dry_run: options.dry_run,
         run: options.run,
     })
+}
+
+/// Compute the effective, validated alias list. CLI `--alias` (`override`)
+/// replaces the manifest `aliases` entirely; otherwise the manifest list is
+/// used. Every alias is normalized, must stay inside the project root, and
+/// must differ from the effective target and from every other alias.
+///
+/// Config errors are detected here, before any filesystem write.
+fn resolve_aliases(
+    manifest: &Manifest,
+    override_list: &Option<Vec<String>>,
+    target_rel: &str,
+) -> Result<Vec<String>, PrepareError> {
+    let raw = match override_list {
+        Some(list) => list.as_slice(),
+        None => manifest.aliases.as_deref().unwrap_or(&[]),
+    };
+    let mut out = Vec::with_capacity(raw.len());
+    let mut seen = HashSet::new();
+    for alias in raw {
+        // normalize_rel rejects empty, absolute and root-escaping paths.
+        let norm = normalize_rel(alias).map_err(PrepareError::InvalidAlias)?;
+        if norm == target_rel {
+            return Err(PrepareError::InvalidAlias(format!(
+                "alias '{norm}' must not equal the target '{target_rel}'"
+            )));
+        }
+        if !seen.insert(norm.clone()) {
+            return Err(PrepareError::InvalidAlias(format!(
+                "duplicate alias '{norm}'"
+            )));
+        }
+        out.push(norm);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -156,6 +202,75 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, PrepareError::InvalidTarget(_)));
+    }
+
+    #[test]
+    fn aliases_come_from_manifest_normalized() {
+        let tmp = project(r#"{ "aliases": ["./.claude/skills", ".cursor\\skills"] }"#);
+        let ctx = prepare(tmp.path(), PrepareOptions::default()).unwrap();
+        assert_eq!(ctx.aliases, [".claude/skills", ".cursor/skills"]);
+    }
+
+    #[test]
+    fn cli_alias_override_replaces_manifest_aliases() {
+        let tmp = project(r#"{ "aliases": [".claude/skills"] }"#);
+        let ctx = prepare(
+            tmp.path(),
+            PrepareOptions {
+                alias_override: Some(vec![".cursor/skills".to_string()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(ctx.aliases, [".cursor/skills"]);
+    }
+
+    #[test]
+    fn empty_cli_alias_override_clears_manifest_aliases() {
+        let tmp = project(r#"{ "aliases": [".claude/skills"] }"#);
+        let ctx = prepare(
+            tmp.path(),
+            PrepareOptions {
+                alias_override: Some(vec![]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(ctx.aliases.is_empty());
+    }
+
+    #[test]
+    fn cli_alias_equal_to_effective_target_rejected() {
+        // `--target` shifts the effective target; an alias that now equals it
+        // must still be rejected even though the manifest was fine.
+        let tmp = project(r#"{ "target": ".agents/skills" }"#);
+        let err = prepare(
+            tmp.path(),
+            PrepareOptions {
+                target_override: Some(".claude/skills".to_string()),
+                alias_override: Some(vec!["./.claude/skills".to_string()]),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, PrepareError::InvalidAlias(m) if m.contains("must not equal the target")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn cli_alias_escaping_root_rejected() {
+        let tmp = project("{}");
+        let err = prepare(
+            tmp.path(),
+            PrepareOptions {
+                alias_override: Some(vec!["../escape".to_string()]),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, PrepareError::InvalidAlias(_)), "{err:?}");
     }
 
     #[test]

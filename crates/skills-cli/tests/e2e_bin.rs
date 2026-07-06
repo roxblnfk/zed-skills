@@ -201,6 +201,143 @@ fn missing_local_dir_is_provider_error_exit_4() {
         .code(4);
 }
 
+// --- Aliases ----------------------------------------------------------------
+
+/// Does `path` resolve on disk to the same canonical location as `target`?
+/// Works across junctions (Windows) and symlinks (POSIX).
+fn resolves_to(path: &std::path::Path, target: &std::path::Path) -> bool {
+    match (std::fs::canonicalize(path), std::fs::canonicalize(target)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+#[test]
+fn project_aliases_are_all_created_and_reachable() {
+    let project = fixture_project("alias");
+    let out = stdout_of(skills_cmd(project.path()).arg("update").assert().success());
+    insta::assert_snapshot!("bin_update_alias_stdout", out);
+
+    let target = project.path().join(".agents").join("skills");
+    for alias_rel in [".claude", ".cursor"] {
+        let alias = project.path().join(alias_rel).join("skills");
+        assert!(
+            resolves_to(&alias, &target),
+            "{alias_rel} must link to target"
+        );
+        // Skill content is reachable through the alias.
+        assert!(alias.join("code-review").join("SKILL.md").is_file());
+    }
+}
+
+#[test]
+fn alias_creation_is_idempotent() {
+    let project = fixture_project("alias");
+    skills_cmd(project.path()).arg("update").assert().success();
+    let out = stdout_of(skills_cmd(project.path()).arg("update").assert().success());
+    // Second run: aliases already correct, still exit 0.
+    assert!(out.contains("already linked"), "{out}");
+    let target = project.path().join(".agents").join("skills");
+    assert!(resolves_to(
+        &project.path().join(".claude").join("skills"),
+        &target
+    ));
+}
+
+#[test]
+fn cli_alias_flag_replaces_project_config_entirely() {
+    let project = fixture_project("alias");
+    // Project config has .claude + .cursor; CLI passes only .zed → takeover.
+    skills_cmd(project.path())
+        .args(["update", "--alias", ".zed/skills"])
+        .assert()
+        .success();
+    let target = project.path().join(".agents").join("skills");
+    assert!(resolves_to(
+        &project.path().join(".zed").join("skills"),
+        &target
+    ));
+    assert!(
+        !project.path().join(".claude").exists(),
+        "project alias must not be created when --alias takes over"
+    );
+    assert!(!project.path().join(".cursor").exists());
+}
+
+#[test]
+fn dry_run_announces_would_link_and_writes_nothing() {
+    let project = fixture_project("alias");
+    let out = stdout_of(
+        skills_cmd(project.path())
+            .args(["update", "--dry-run"])
+            .assert()
+            .success(),
+    );
+    assert!(out.contains("[would link]"), "{out}");
+    assert!(out.contains(".claude/skills"), "{out}");
+    assert!(!project.path().join(".claude").exists());
+    assert!(!project.path().join(".agents").exists());
+}
+
+#[test]
+fn pre_existing_real_directory_at_alias_fails_run_and_keeps_content() {
+    let project = fixture_project("alias");
+    // Occupy one alias path with a real dir holding user content.
+    let claude = project.path().join(".claude").join("skills");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::write(claude.join("user.txt"), "precious").unwrap();
+
+    let assert = skills_cmd(project.path())
+        .args(["update", "--alias", ".claude/skills"])
+        .assert()
+        .failure()
+        .code(1);
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("alias"), "{stderr}");
+
+    // User content preserved; the target was still copied.
+    assert_eq!(
+        std::fs::read_to_string(claude.join("user.txt")).unwrap(),
+        "precious"
+    );
+    assert!(
+        project
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("code-review")
+            .join("SKILL.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn alias_equal_to_target_is_config_error() {
+    let project = fixture_project("basic");
+    let assert = skills_cmd(project.path())
+        .args(["update", "--alias", ".agents/skills"])
+        .assert()
+        .failure()
+        .code(1);
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("must not equal the target"), "{stderr}");
+    // Config error before any write.
+    assert!(!project.path().join(".agents").exists());
+}
+
+#[test]
+fn alias_escaping_project_root_is_config_error() {
+    let project = fixture_project("basic");
+    let assert = skills_cmd(project.path())
+        .args(["update", "--alias", "../escape"])
+        .assert()
+        .failure()
+        .code(1);
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("escapes the project root"), "{stderr}");
+    assert!(!project.path().join("..").join("escape").exists());
+}
+
 // --- Show -------------------------------------------------------------------
 
 #[test]

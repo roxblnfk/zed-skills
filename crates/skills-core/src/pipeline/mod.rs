@@ -27,7 +27,7 @@ pub use audit::ChainEntry;
 pub use ctx::{Ctx, PrepareOptions, RunOptions, prepare};
 pub use plan::SyncPlan;
 pub use resolve::Resolution;
-pub use sync::{SyncAction, SyncEntry, SyncReport};
+pub use sync::{AliasResult, SyncAction, SyncEntry, SyncReport};
 pub use trust::{KeptDonor, SkipReason, SkippedDonor, TrustOutcome, TrustSource};
 
 /// Run the full pipeline after Prepare. Honors `ctx.dry_run` (full pipeline

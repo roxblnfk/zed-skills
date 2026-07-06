@@ -15,6 +15,7 @@ use crate::audit::{AuditFinding, AuditedSkill, Severity};
 use crate::domain::{Note, ResolvedSkill};
 use crate::error::SyncError;
 use crate::fsutil;
+use crate::link::{self, LinkStatus};
 use crate::lockfile::{LOCKFILE_NAME, LockedSkill, Lockfile};
 use crate::manifest::AuditMode;
 use crate::paths::rel_to_path;
@@ -43,6 +44,19 @@ pub struct SyncEntry {
     pub audit_cached: bool,
 }
 
+/// Outcome of creating one alias link (junction / symlink) at `alias_rel`,
+/// pointing at the sync target.
+#[derive(Debug, Clone)]
+pub struct AliasResult {
+    /// Normalized `/`-separated alias path, relative to the project root.
+    pub alias_rel: String,
+    /// The target the alias points at (`target_rel`), for display.
+    pub target_rel: String,
+    pub status: LinkStatus,
+    /// Failure detail; `Some` only when `status == Failed`.
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SyncReport {
     pub target_rel: String,
@@ -50,6 +64,8 @@ pub struct SyncReport {
     pub audit_mode: AuditMode,
     /// Sorted by (vendor, id) so output groups cleanly per donor.
     pub entries: Vec<SyncEntry>,
+    /// One entry per configured alias, in declaration order.
+    pub aliases: Vec<AliasResult>,
     pub notes: Vec<Note>,
 }
 
@@ -57,11 +73,19 @@ impl SyncReport {
     pub fn count(&self, action: SyncAction) -> usize {
         self.entries.iter().filter(|e| e.action == action).count()
     }
+
+    /// Whether any alias could not be created (a state-matrix rejection). The
+    /// copied target is left intact; the CLI surfaces this as exit code 1.
+    pub fn alias_failed(&self) -> bool {
+        self.aliases.iter().any(|a| a.status == LinkStatus::Failed)
+    }
 }
 
 pub fn sync(ctx: &Ctx, plan: SyncPlan, notes: Vec<Note>) -> Result<SyncReport, SyncError> {
-    let report = build_report(ctx, &plan, notes);
+    let mut report = build_report(ctx, &plan, notes);
     if ctx.dry_run {
+        // Read-only alias checks: WouldCreate, or a state-matrix collision.
+        report.aliases = link_aliases(ctx, true);
         return Ok(report);
     }
 
@@ -94,7 +118,39 @@ pub fn sync(ctx: &Ctx, plan: SyncPlan, notes: Vec<Note>) -> Result<SyncReport, S
     }
     lock.save(&ctx.project_root.join(LOCKFILE_NAME))?;
 
+    // Aliases run after the copy step, so the target exists by now. A failed
+    // alias does not roll back the copy — it is reported and the CLI exits
+    // nonzero.
+    report.aliases = link_aliases(ctx, false);
+
     Ok(report)
+}
+
+/// Create (or check, in dry-run) every configured alias as a link to the
+/// target. Never aborts on a single failure — each alias is independent and
+/// its outcome travels in the report.
+fn link_aliases(ctx: &Ctx, dry_run: bool) -> Vec<AliasResult> {
+    if ctx.aliases.is_empty() {
+        return Vec::new();
+    }
+    // A real run needs the target to exist as the link destination even when
+    // nothing was synced (the copy step only creates it lazily).
+    if !dry_run && !ctx.target_abs.exists() {
+        let _ = std::fs::create_dir_all(&ctx.target_abs);
+    }
+    ctx.aliases
+        .iter()
+        .map(|rel| {
+            let alias_abs = ctx.project_root.join(rel_to_path(rel));
+            let outcome = link::link(&alias_abs, &ctx.target_abs, dry_run);
+            AliasResult {
+                alias_rel: rel.clone(),
+                target_rel: ctx.target_rel.clone(),
+                status: outcome.status,
+                reason: outcome.reason,
+            }
+        })
+        .collect()
 }
 
 fn build_report(ctx: &Ctx, plan: &SyncPlan, notes: Vec<Note>) -> SyncReport {
@@ -130,6 +186,7 @@ fn build_report(ctx: &Ctx, plan: &SyncPlan, notes: Vec<Note>) -> SyncReport {
         dry_run: ctx.dry_run,
         audit_mode: ctx.manifest.audit_mode(),
         entries,
+        aliases: Vec::new(),
         notes,
     }
 }
@@ -275,6 +332,25 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    fn ctx_with_aliases(f: &Fixture, dry_run: bool, aliases: &[&str]) -> Ctx {
+        prepare(
+            &f.project,
+            PrepareOptions {
+                dry_run,
+                alias_override: Some(aliases.iter().map(|a| a.to_string()).collect()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    }
+
+    fn alias_resolves_to(alias: &Path, target: &Path) -> bool {
+        match (std::fs::canonicalize(alias), std::fs::canonicalize(target)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
     }
 
     fn donor_skill(f: &Fixture, id: &str, files: &[(&str, &str)]) -> ResolvedSkill {
@@ -493,6 +569,120 @@ mod tests {
             .unwrap();
         let ids: Vec<&str> = lock.skills.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["added", "kept", "skipped", "updated"]);
+    }
+
+    #[test]
+    fn alias_is_created_and_points_at_target() {
+        let f = fixture();
+        let skill = donor_skill(&f, "alpha", &[("SKILL.md", "hi")]);
+        let ctx = ctx_with_aliases(&f, false, &[".claude/skills"]);
+        let plan = SyncPlan {
+            add: vec![pass(skill)],
+            ..Default::default()
+        };
+        let report = sync(&ctx, plan, vec![]).unwrap();
+
+        assert_eq!(report.aliases.len(), 1);
+        assert_eq!(report.aliases[0].status, LinkStatus::Created);
+        assert!(!report.alias_failed());
+
+        let alias = f.project.join(".claude").join("skills");
+        assert!(alias_resolves_to(&alias, &ctx.target_abs));
+        // Skill content is reachable through the alias.
+        assert_eq!(
+            std::fs::read_to_string(alias.join("alpha").join("SKILL.md")).unwrap(),
+            "hi"
+        );
+    }
+
+    #[test]
+    fn multiple_aliases_are_all_created() {
+        let f = fixture();
+        let skill = donor_skill(&f, "alpha", &[("SKILL.md", "hi")]);
+        let ctx = ctx_with_aliases(&f, false, &[".claude/skills", ".cursor/skills"]);
+        let plan = SyncPlan {
+            add: vec![pass(skill)],
+            ..Default::default()
+        };
+        let report = sync(&ctx, plan, vec![]).unwrap();
+        assert_eq!(report.aliases.len(), 2);
+        assert!(
+            report
+                .aliases
+                .iter()
+                .all(|a| a.status == LinkStatus::Created)
+        );
+        assert!(alias_resolves_to(
+            &f.project.join(".claude").join("skills"),
+            &ctx.target_abs
+        ));
+        assert!(alias_resolves_to(
+            &f.project.join(".cursor").join("skills"),
+            &ctx.target_abs
+        ));
+    }
+
+    #[test]
+    fn alias_creation_is_idempotent() {
+        let f = fixture();
+        let ctx = ctx_with_aliases(&f, false, &[".claude/skills"]);
+        let mk = || {
+            let skill = donor_skill(&f, "alpha", &[("SKILL.md", "hi")]);
+            SyncPlan {
+                add: vec![pass(skill)],
+                ..Default::default()
+            }
+        };
+        assert_eq!(
+            sync(&ctx, mk(), vec![]).unwrap().aliases[0].status,
+            LinkStatus::Created
+        );
+        // Second run: the skill is re-added here (fresh plan), but the alias
+        // already points at the target — a no-op success.
+        let report = sync(&ctx, mk(), vec![]).unwrap();
+        assert_eq!(report.aliases[0].status, LinkStatus::AlreadyCorrect);
+        assert!(!report.alias_failed());
+    }
+
+    #[test]
+    fn pre_existing_real_directory_at_alias_path_fails_run_but_keeps_target() {
+        let f = fixture();
+        let ctx = ctx_with_aliases(&f, false, &[".claude/skills"]);
+        // A real directory with user content sits at the alias path.
+        let alias = f.project.join(".claude").join("skills");
+        std::fs::create_dir_all(&alias).unwrap();
+        std::fs::write(alias.join("user.txt"), "precious").unwrap();
+
+        let skill = donor_skill(&f, "alpha", &[("SKILL.md", "hi")]);
+        let plan = SyncPlan {
+            add: vec![pass(skill)],
+            ..Default::default()
+        };
+        let report = sync(&ctx, plan, vec![]).unwrap();
+
+        assert!(report.alias_failed());
+        assert_eq!(report.aliases[0].status, LinkStatus::Failed);
+        // User content preserved; the copied target is intact.
+        assert_eq!(
+            std::fs::read_to_string(alias.join("user.txt")).unwrap(),
+            "precious"
+        );
+        assert!(ctx.target_abs.join("alpha").join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn dry_run_reports_would_create_and_writes_no_alias() {
+        let f = fixture();
+        let skill = donor_skill(&f, "alpha", &[("SKILL.md", "hi")]);
+        let ctx = ctx_with_aliases(&f, true, &[".claude/skills"]);
+        let plan = SyncPlan {
+            add: vec![pass(skill)],
+            ..Default::default()
+        };
+        let report = sync(&ctx, plan, vec![]).unwrap();
+        assert_eq!(report.aliases[0].status, LinkStatus::WouldCreate);
+        assert!(!f.project.join(".claude").exists());
+        assert!(!ctx.target_abs.exists());
     }
 
     #[test]
