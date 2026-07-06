@@ -46,9 +46,14 @@ enum Command {
         /// Only run the named provider (dir, composer, github, gitlab, url).
         #[arg(long, value_name = "ID")]
         from: Option<String>,
-        /// Delete matching cache entries and re-download remote archives.
+        /// Delete matching cache entries and re-download remote archives
+        /// (does not bypass the audit verdict cache; see --re-audit).
         #[arg(long)]
         refresh: bool,
+        /// Bypass the lockfile audit-verdict cache and re-run the audit
+        /// chain for every skill.
+        #[arg(long)]
+        re_audit: bool,
         /// Extra trusted vendor pattern on top of the built-in and project
         /// lists (repeatable).
         #[arg(long = "trust", value_name = "PATTERN")]
@@ -168,6 +173,7 @@ async fn main() -> ExitCode {
             target,
             from,
             refresh,
+            re_audit,
             trust,
             discovery,
         } => {
@@ -177,6 +183,7 @@ async fn main() -> ExitCode {
                 target,
                 from,
                 refresh,
+                re_audit,
                 commands::RawFilters {
                     packages,
                     trust,

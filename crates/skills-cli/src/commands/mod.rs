@@ -6,8 +6,9 @@ pub mod update;
 use std::sync::Arc;
 
 use skills_core::pattern::VendorPattern;
+use skills_core::pipeline::ChainEntry;
 use skills_core::pipeline::ctx::RunOptions;
-use skills_core::traits::{Auditor, SkillLocator, VendorProvider};
+use skills_core::traits::{SkillLocator, VendorProvider};
 use skills_providers::http::{HttpClient, ReqwestClient};
 use skills_providers::{
     ComposerDeclaredLocator, ComposerProvider, DeclaredLocator, DirProvider, GithubProvider,
@@ -35,6 +36,7 @@ impl RawFilters {
             trust: parse_patterns(&self.trust, "--trust value")?,
             discovery: self.discovery.then_some(true),
             scoped,
+            re_audit: false,
         })
     }
 }
@@ -91,6 +93,10 @@ pub(crate) fn locators(discovery: bool) -> Vec<Arc<dyn SkillLocator>> {
     ]
 }
 
-pub(crate) fn auditors() -> Vec<Arc<dyn Auditor>> {
-    skills_audit::noop_chain()
+/// Build the audit chain from the manifest (`audit.pipeline`); referencing a
+/// not-yet-implemented auditor is a config error (exit 1).
+pub(crate) fn audit_chain(
+    manifest: &skills_core::manifest::Manifest,
+) -> Result<Vec<ChainEntry>, CliError> {
+    skills_audit::build_chain(manifest).map_err(|e| CliError::config(e.to_string()))
 }

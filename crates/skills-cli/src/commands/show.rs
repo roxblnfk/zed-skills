@@ -60,16 +60,23 @@ pub async fn run(cwd: &Path, from: Option<String>, filters: RawFilters) -> Resul
     for vendor in &vendors {
         let mut lines = Vec::new();
         for skill in scanned.iter().filter(|s| s.vendor == vendor.name) {
-            let status = match ctx.lockfile.find(&skill.id) {
+            let locked = ctx.lockfile.find(&skill.id);
+            let status = match locked {
                 None => SyncStatus::NotSynced,
                 Some(locked) => {
                     sync_status(&ctx.target_abs.join(rel_to_path(skill.id.as_str())), locked)
                 }
             };
+            // Cached verdict from the lockfile; passing verdicts stay quiet.
+            let audit = locked
+                .and_then(|l| l.audit.as_ref())
+                .filter(|a| a.verdict != "pass")
+                .map(|a| a.verdict.clone());
             lines.push(ShowLine {
                 id: skill.id.as_str().to_string(),
                 description: skill.description.clone(),
                 status,
+                audit,
             });
         }
         groups.push(ShowVendor {

@@ -1,9 +1,22 @@
 //! Plain-text report rendering (ASCII only: Windows consoles are a
 //! first-class target).
 
+use skills_core::audit::Severity;
 use skills_core::domain::{Note, NoteKind};
 use skills_core::lockfile::SyncStatus;
+use skills_core::manifest::AuditMode;
 use skills_core::pipeline::{SyncAction, SyncReport};
+
+/// Display label of an audit severity. Under `mode: warn` blocking findings
+/// render as warnings — they do not stop the sync.
+fn severity_label(severity: Severity, mode: AuditMode) -> &'static str {
+    match (severity, mode) {
+        (Severity::Block, AuditMode::Warn) => "warn",
+        (Severity::Block, _) => "block",
+        (Severity::Warn, _) => "warn",
+        (Severity::Pass, _) => "pass",
+    }
+}
 
 pub fn render_update(report: &SyncReport) -> String {
     let mut out = String::new();
@@ -33,6 +46,31 @@ pub fn render_update(report: &SyncReport) -> String {
             (SyncAction::Skip, _) => format!("[ok]   {} (up to date)", entry.id),
         };
         out.push_str(&format!("  {line}\n"));
+
+        // Audit findings, grouped under their skill.
+        for finding in &entry.findings {
+            if finding.severity == Severity::Pass {
+                continue;
+            }
+            let location = finding
+                .location
+                .as_deref()
+                .map(|l| format!(" ({l})"))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "         [audit] {} {}: {}{location}\n",
+                severity_label(finding.severity, report.audit_mode),
+                finding.auditor,
+                finding.message,
+            ));
+        }
+        if entry.audit_cached && entry.verdict.is_some_and(|v| v != Severity::Pass) {
+            let verdict = entry.verdict.unwrap_or_default();
+            out.push_str(&format!(
+                "         [audit] cached verdict: {} (--re-audit to recheck)\n",
+                severity_label(verdict, report.audit_mode),
+            ));
+        }
     }
 
     if report.entries.is_empty() {
@@ -81,6 +119,9 @@ pub struct ShowLine {
     pub id: String,
     pub description: Option<String>,
     pub status: SyncStatus,
+    /// Cached audit verdict from the lockfile (only surfaced when not
+    /// passing), rendered as an `[audit: ...]` chip.
+    pub audit: Option<String>,
 }
 
 /// A donor that did not make it into the main listing, with its reason.
@@ -133,9 +174,14 @@ pub fn render_show(
                 SyncStatus::Modified => "[mod]",
                 SyncStatus::NotSynced => "not-synced",
             };
+            let audit = line
+                .audit
+                .as_deref()
+                .map(|v| format!(" [audit: {v}]"))
+                .unwrap_or_default();
             let desc = line.description.as_deref().unwrap_or("-");
             out.push_str(&format!(
-                "  {:<id_width$}  {:<desc_width$}  {status}\n",
+                "  {:<id_width$}  {:<desc_width$}  {status}{audit}\n",
                 line.id, desc
             ));
         }

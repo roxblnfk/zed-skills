@@ -126,6 +126,7 @@ pub async fn run(
         None,
         None,
         false,
+        false,
         super::RawFilters {
             packages: Vec::new(),
             trust: Vec::new(),
