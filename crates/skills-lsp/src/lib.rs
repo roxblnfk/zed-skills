@@ -5,12 +5,15 @@
 //!   a read-only pipeline dry analysis (donor conflicts, unknown allowlist
 //!   names, lockfile staleness, not-yet-fetched remotes) — cache-only, no
 //!   network, no writes.
-//! - `SKILL.md`: frontmatter + StaticAuditor findings over the buffer text.
+//! - `SKILL.md`: frontmatter + StaticAuditor findings over the buffer text,
+//!   plus frontmatter completion (known keys, bool/enum values, a bootstrap
+//!   `---` block snippet).
 //! - Code action "Run skills update" → `workspace/executeCommand`
 //!   `skills.update` runs the real pipeline in-process.
 //! - Own `notify` FS watcher re-triggers analysis on external changes.
 
 pub mod analysis;
+pub mod completion;
 pub mod offline;
 pub mod server;
 pub mod spanindex;

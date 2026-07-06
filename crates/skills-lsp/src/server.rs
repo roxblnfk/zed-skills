@@ -13,18 +13,19 @@ use std::time::Duration;
 use tower_lsp_server::jsonrpc::{Error, Result};
 use tower_lsp_server::ls_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
-    CodeActionProviderCapability, CodeActionResponse, Command, Diagnostic,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams, InitializeParams,
-    InitializeResult, InitializedParams, MessageType, NumberOrString, ServerCapabilities,
-    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
+    CodeActionProviderCapability, CodeActionResponse, Command, CompletionOptions, CompletionParams,
+    CompletionResponse, Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, ExecuteCommandOptions,
+    ExecuteCommandParams, InitializeParams, InitializeResult, InitializedParams, MessageType,
+    NumberOrString, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
+    TextDocumentSyncKind, Uri,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
 use skills_core::manifest::{MANIFEST_NAME, Manifest};
 
 use crate::watch::WatchHandle;
-use crate::{analysis, update, watch};
+use crate::{analysis, completion, update, watch};
 
 /// Debounce window for `didChange` bursts.
 const CHANGE_DEBOUNCE: Duration = Duration::from_millis(300);
@@ -289,6 +290,16 @@ impl LanguageServer for Backend {
                     TextDocumentSyncKind::FULL,
                 )),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                completion_provider: Some(CompletionOptions {
+                    // Letters re-trigger completion natively; ':' and ' '
+                    // open the value position, '-' the line-0 bootstrap.
+                    trigger_characters: Some(vec![
+                        ":".to_string(),
+                        " ".to_string(),
+                        "-".to_string(),
+                    ]),
+                    ..CompletionOptions::default()
+                }),
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: vec![UPDATE_COMMAND.to_string()],
                     ..ExecuteCommandOptions::default()
@@ -387,6 +398,36 @@ impl LanguageServer for Backend {
             // We are the only diagnostics source for these files.
             self.client.publish_diagnostics(uri, Vec::new(), None).await;
         }
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let position = params.text_document_position.position;
+        let uri = params.text_document_position.text_document.uri;
+        // Frontmatter completion applies to SKILL.md buffers only.
+        let snapshot = {
+            let docs = self.state.docs.lock().expect("state lock");
+            docs.get(&uri).and_then(|doc| {
+                (doc.kind == DocKind::SkillMd).then(|| (doc.text.clone(), doc.path.clone()))
+            })
+        };
+        let Some((text, path)) = snapshot else {
+            return Ok(None);
+        };
+        let dir_name = path
+            .parent()
+            .and_then(|d| d.file_name())
+            .and_then(|n| n.to_str())
+            .map(str::to_string);
+        let items = completion::complete(
+            &text,
+            position.line,
+            position.character,
+            dir_name.as_deref(),
+        );
+        if items.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(CompletionResponse::Array(items)))
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
