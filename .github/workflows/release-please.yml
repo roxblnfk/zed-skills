@@ -21,8 +21,36 @@ jobs:
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
 
-  # When a release PR is merged, release-please creates the tag + GitHub Release.
-  # A GITHUB_TOKEN-created tag does not trigger the tag-push workflow, so build
+      # release-please bumps [workspace.package] version but cannot touch
+      # Cargo.lock. Resync the lockfile (workspace members only, external deps
+      # stay pinned) and commit it into the open release PR, so the merge lands
+      # a consistent tree and Release can build with --locked.
+      - uses: actions/checkout@v7
+        if: ${{ steps.rp.outputs.prs_created == 'true' }}
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@1.96.0
+        if: ${{ steps.rp.outputs.prs_created == 'true' }}
+
+      - name: Sync Cargo.lock into the release PR
+        if: ${{ steps.rp.outputs.prs_created == 'true' }}
+        env:
+          PR_BRANCH: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$PR_BRANCH"
+          git checkout "$PR_BRANCH"
+          cargo update --workspace
+          if ! git diff --quiet -- Cargo.lock; then
+            git add Cargo.lock
+            git commit -m "chore: sync Cargo.lock with release version"
+            git push origin "$PR_BRANCH"
+          fi
+
+  # On merge, release-please creates the tag + GitHub Release. A
+  # GITHUB_TOKEN-created tag does not trigger the tag-push workflow, so build
   # and attach assets inline via the reusable Release workflow instead.
   release:
     needs: release-please

@@ -66,10 +66,7 @@ jobs:
           EOF
 
       - name: Build
-        # No --locked: release-please bumps [workspace.package] version without
-        # touching Cargo.lock, so the lockfile's local-crate versions lag by one
-        # release and cargo resyncs them here. External deps stay pinned.
-        run: cargo build --release -p skills --target ${{ matrix.target }}
+        run: cargo build --release --locked -p skills --target ${{ matrix.target }}
 
       - name: Package (unix)
         if: runner.os != 'Windows'
