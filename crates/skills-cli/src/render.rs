@@ -1,7 +1,7 @@
 //! Plain-text report rendering (ASCII only: Windows consoles are a
 //! first-class target).
 
-use skills_core::domain::NoteKind;
+use skills_core::domain::{Note, NoteKind};
 use skills_core::lockfile::SyncStatus;
 use skills_core::pipeline::{SyncAction, SyncReport};
 
@@ -53,6 +53,7 @@ pub fn render_update(report: &SyncReport) -> String {
             let tag = match note.kind {
                 NoteKind::Skip => "[skip]",
                 NoteKind::Hint => "[hint]",
+                NoteKind::Warn => "[warn]",
             };
             out.push_str(&format!("{tag} {}\n", note.message));
         }
@@ -70,6 +71,9 @@ fn plural(n: usize) -> String {
 
 pub struct ShowVendor {
     pub name: String,
+    /// Trust/discovery chips rendered after the vendor name, e.g.
+    /// `[builtin]`, `[direct-dep]`, `[discovered]`.
+    pub annotations: Vec<String>,
     pub lines: Vec<ShowLine>,
 }
 
@@ -79,11 +83,22 @@ pub struct ShowLine {
     pub status: SyncStatus,
 }
 
-pub fn render_show(target_rel: &str, vendors: &[ShowVendor]) -> String {
+/// A donor that did not make it into the main listing, with its reason.
+pub struct ShowSkipped {
+    pub name: String,
+    pub reason: String,
+}
+
+pub fn render_show(
+    target_rel: &str,
+    vendors: &[ShowVendor],
+    skipped: &[ShowSkipped],
+    notes: &[Note],
+) -> String {
     let mut out = String::new();
     out.push_str(&format!("Target: {target_rel}\n"));
 
-    if vendors.is_empty() {
+    if vendors.is_empty() && skipped.is_empty() {
         out.push_str("\nNo donors configured (add local.dir entries to skills.json).\n");
         return out;
     }
@@ -102,7 +117,12 @@ pub fn render_show(target_rel: &str, vendors: &[ShowVendor]) -> String {
         .unwrap_or(1);
 
     for vendor in vendors {
-        out.push_str(&format!("\n{}:\n", vendor.name));
+        let mut header = vendor.name.clone();
+        for chip in &vendor.annotations {
+            header.push(' ');
+            header.push_str(chip);
+        }
+        out.push_str(&format!("\n{header}:\n"));
         if vendor.lines.is_empty() {
             out.push_str("  (no skills)\n");
             continue;
@@ -118,6 +138,29 @@ pub fn render_show(target_rel: &str, vendors: &[ShowVendor]) -> String {
                 "  {:<id_width$}  {:<desc_width$}  {status}\n",
                 line.id, desc
             ));
+        }
+    }
+
+    if !skipped.is_empty() {
+        let name_width = skipped.iter().map(|s| s.name.len()).max().unwrap_or(0);
+        out.push_str("\nSkipped:\n");
+        for entry in skipped {
+            out.push_str(&format!(
+                "  {:<name_width$}  {}\n",
+                entry.name, entry.reason
+            ));
+        }
+    }
+
+    if !notes.is_empty() {
+        out.push('\n');
+        for note in notes {
+            let tag = match note.kind {
+                NoteKind::Skip => "[skip]",
+                NoteKind::Hint => "[hint]",
+                NoteKind::Warn => "[warn]",
+            };
+            out.push_str(&format!("{tag} {}\n", note.message));
         }
     }
     out

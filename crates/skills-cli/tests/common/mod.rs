@@ -50,9 +50,8 @@ pub fn make_ctx(project_root: &Path, dry_run: bool) -> Result<Ctx, PipelineError
     Ok(prepare(
         project_root,
         PrepareOptions {
-            target_override: None,
             dry_run,
-            refresh: false,
+            ..Default::default()
         },
     )?)
 }

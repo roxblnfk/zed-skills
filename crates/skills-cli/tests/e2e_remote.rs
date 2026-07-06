@@ -51,9 +51,8 @@ async fn run(project: &Path, refresh: bool) -> Result<SyncReport, PipelineError>
     let ctx = prepare(
         project,
         PrepareOptions {
-            target_override: None,
-            dry_run: false,
             refresh,
+            ..Default::default()
         },
     )?;
     run_update(&ctx, &providers(), &locators(), &skills_audit::noop_chain()).await

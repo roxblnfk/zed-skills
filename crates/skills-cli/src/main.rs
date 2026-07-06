@@ -31,6 +31,11 @@ enum Command {
     },
     /// Sync skills from all configured donors into the target directory.
     Update {
+        /// Restrict the sync to matching packages (`vendor/package` or
+        /// `vendor/*`). Naming a package implicitly trusts it and enables
+        /// discovery for it.
+        #[arg(value_name = "PACKAGE")]
+        packages: Vec<String>,
         /// Run the full pipeline (including conflict detection) without
         /// writing anything.
         #[arg(long)]
@@ -38,18 +43,37 @@ enum Command {
         /// Override the sync target from skills.json.
         #[arg(long, value_name = "PATH")]
         target: Option<String>,
-        /// Only run the named provider (dir, github, gitlab, url).
+        /// Only run the named provider (dir, composer, github, gitlab, url).
         #[arg(long, value_name = "ID")]
         from: Option<String>,
         /// Delete matching cache entries and re-download remote archives.
         #[arg(long)]
         refresh: bool,
+        /// Extra trusted vendor pattern on top of the built-in and project
+        /// lists (repeatable).
+        #[arg(long = "trust", value_name = "PATTERN")]
+        trust: Vec<String>,
+        /// Include undeclared skills of trusted packages (well-known
+        /// containers + bounded recursive fallback).
+        #[arg(long)]
+        discovery: bool,
     },
     /// List donors and skills with their sync status. Read-only.
     Show {
-        /// Only show donors of the named provider (dir, github, gitlab, url).
+        /// Only show matching packages; non-matching donors are listed as
+        /// filtered-out.
+        #[arg(value_name = "PACKAGE")]
+        packages: Vec<String>,
+        /// Only show donors of the named provider (dir, composer, github,
+        /// gitlab, url).
         #[arg(long, value_name = "ID")]
         from: Option<String>,
+        /// Extra trusted vendor pattern (repeatable).
+        #[arg(long = "trust", value_name = "PATTERN")]
+        trust: Vec<String>,
+        /// Include undeclared skills of trusted packages.
+        #[arg(long)]
+        discovery: bool,
     },
     /// Register a remote donor in skills.json and sync it immediately.
     Add {
@@ -95,7 +119,7 @@ impl CliError {
 impl From<PipelineError> for CliError {
     fn from(err: PipelineError) -> Self {
         let code = match &err {
-            PipelineError::Prepare(_) | PipelineError::Sync(_) => 1,
+            PipelineError::Prepare(_) | PipelineError::Trust(_) | PipelineError::Sync(_) => 1,
             PipelineError::Resolve(_) => 2,
             PipelineError::Audit(_) => 3,
             PipelineError::Discover(_) | PipelineError::Materialize(_) | PipelineError::Scan(_) => {
@@ -139,12 +163,45 @@ async fn main() -> ExitCode {
     let result = match cli.command {
         Command::Init { force } => commands::init::run(&cwd, force),
         Command::Update {
+            packages,
             dry_run,
             target,
             from,
             refresh,
-        } => commands::update::run(&cwd, dry_run, target, from, refresh).await,
-        Command::Show { from } => commands::show::run(&cwd, from).await,
+            trust,
+            discovery,
+        } => {
+            commands::update::run(
+                &cwd,
+                dry_run,
+                target,
+                from,
+                refresh,
+                commands::RawFilters {
+                    packages,
+                    trust,
+                    discovery,
+                },
+            )
+            .await
+        }
+        Command::Show {
+            packages,
+            from,
+            trust,
+            discovery,
+        } => {
+            commands::show::run(
+                &cwd,
+                from,
+                commands::RawFilters {
+                    packages,
+                    trust,
+                    discovery,
+                },
+            )
+            .await
+        }
         Command::Add {
             input,
             r#ref,

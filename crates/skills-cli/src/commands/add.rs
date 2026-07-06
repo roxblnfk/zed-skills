@@ -84,7 +84,7 @@ pub async fn run(
         .materialize(&cache)
         .await
         .map_err(|e| CliError::provider(e.to_string()))?;
-    let scanned = scan_vendor(materialized, super::locators())
+    let scanned = scan_vendor(materialized, super::locators(false))
         .await
         .map_err(|e| {
             CliError::provider(format!(
@@ -120,7 +120,19 @@ pub async fn run(
     );
 
     // 6. Sync.
-    super::update::run(cwd, false, None, None, false).await
+    super::update::run(
+        cwd,
+        false,
+        None,
+        None,
+        false,
+        super::RawFilters {
+            packages: Vec::new(),
+            trust: Vec::new(),
+            discovery: false,
+        },
+    )
+    .await
 }
 
 /// Insert or update the `remote[]` entry (uniqueness key:
