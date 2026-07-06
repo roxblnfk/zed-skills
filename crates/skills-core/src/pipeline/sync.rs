@@ -243,6 +243,7 @@ mod tests {
             PrepareOptions {
                 target_override: None,
                 dry_run,
+                refresh: false,
             },
         )
         .unwrap()

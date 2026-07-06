@@ -16,6 +16,18 @@ use crate::pipeline::ctx::Ctx;
 #[derive(Debug, Clone)]
 pub struct Cache {
     pub root: PathBuf,
+    /// `skills update --refresh`: delete matching cache entries before
+    /// materializing (forces re-download; there is no TTL otherwise).
+    pub refresh: bool,
+}
+
+impl Cache {
+    pub fn new(root: PathBuf) -> Self {
+        Cache {
+            root,
+            refresh: false,
+        }
+    }
 }
 
 /// Discovers donor references from the project context.

@@ -32,6 +32,8 @@ pub struct PrepareOptions {
     /// CLI `--target` override; beats the manifest value.
     pub target_override: Option<String>,
     pub dry_run: bool,
+    /// CLI `--refresh`: force re-download of cached remote archives.
+    pub refresh: bool,
 }
 
 /// Stage 1 — Prepare.
@@ -53,6 +55,7 @@ pub fn prepare(project_root: &Path, options: PrepareOptions) -> Result<Ctx, Prep
         target_abs,
         cache: Cache {
             root: project_root.join(CACHE_DIR),
+            refresh: options.refresh,
         },
         dry_run: options.dry_run,
     })
@@ -93,6 +96,7 @@ mod tests {
             PrepareOptions {
                 target_override: Some("./override/here".to_string()),
                 dry_run: true,
+                refresh: false,
             },
         )
         .unwrap();
@@ -108,6 +112,7 @@ mod tests {
             PrepareOptions {
                 target_override: Some("../escape".to_string()),
                 dry_run: false,
+                refresh: false,
             },
         )
         .unwrap_err();

@@ -61,6 +61,8 @@ pub enum ProviderId {
     Composer,
     Github,
     Gitlab,
+    /// By-url remote entries (`from: http|zip`).
+    Url,
 }
 
 impl ProviderId {
@@ -70,6 +72,7 @@ impl ProviderId {
             ProviderId::Composer => "composer",
             ProviderId::Github => "github",
             ProviderId::Gitlab => "gitlab",
+            ProviderId::Url => "url",
         }
     }
 }
@@ -94,6 +97,10 @@ pub enum Origin {
         package: String,
         #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
         r#ref: Option<String>,
+    },
+    /// By-url donors (`from: http|zip`).
+    Url {
+        url: String,
     },
 }
 
