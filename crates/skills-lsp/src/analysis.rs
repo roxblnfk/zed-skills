@@ -24,7 +24,7 @@ use tower_lsp_server::ls_types::{Diagnostic, DiagnosticSeverity, NumberOrString,
 use skills_core::audit::{AuditedSkill, Severity};
 use skills_core::domain::{NoteKind, Origin, ProviderId, ScannedSkill, VendorRef};
 use skills_core::error::MaterializeError;
-use skills_core::lockfile::{LOCKFILE_NAME, Lockfile};
+use skills_core::lockfile::Lockfile;
 use skills_core::manifest::{Manifest, PathSeg, RemoteEntry};
 use skills_core::pipeline::ctx::{CACHE_DIR, Ctx, RunOptions};
 use skills_core::pipeline::{plan, resolve, scan, trust};
@@ -181,7 +181,10 @@ async fn dry_pipeline(
 ) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
 
-    let lockfile = match Lockfile::load(&project_root.join(LOCKFILE_NAME)) {
+    let lock_abs = project_root.join(skills_core::paths::rel_to_path(
+        &manifest.effective_lock_file(),
+    ));
+    let lockfile = match Lockfile::load(&lock_abs) {
         Ok(lockfile) => lockfile.unwrap_or_default(),
         Err(e) => {
             diags.push(diag(

@@ -2,9 +2,10 @@
 //! with the `ReadDirectoryChangesW` backend on Windows) instead of relying
 //! on client-side `workspace/didChangeWatchedFiles`.
 //!
-//! Watch set: the project root (non-recursive — covers `skills.json` and
-//! `skills.lock`), every `local.dir` path, `vendor/` (composer donors) and
-//! the sync target. Events are debounced by `notify-debouncer-mini` and
+//! Watch set: the project root (non-recursive — covers `skills.json` and a
+//! root-level lockfile), every `local.dir` path, `vendor/` (composer donors),
+//! the sync target and the parent dir of a non-root `lock-file` path.
+//! Events are debounced by `notify-debouncer-mini` and
 //! forwarded as a unit signal; the server re-analyzes open documents and
 //! re-resolves the watch set (the manifest may have changed).
 
@@ -69,6 +70,13 @@ fn watch_set(project_root: &Path, manifest: Option<&Manifest>) -> Vec<PathBuf> {
             paths.push(join_declared(project_root, dir));
         }
         paths.push(project_root.join(rel_to_path(&manifest.effective_target())));
+        let lock_abs = project_root.join(rel_to_path(&manifest.effective_lock_file()));
+        if let Some(parent) = lock_abs.parent()
+            && parent != project_root
+            && !paths.iter().any(|p| p == parent)
+        {
+            paths.push(parent.to_path_buf());
+        }
     }
     paths.retain(|p| p.is_dir());
     paths
@@ -92,6 +100,21 @@ mod tests {
             set,
             vec![tmp.path().join("vendor"), tmp.path().join("skills-src")]
         );
+    }
+
+    #[test]
+    fn watch_set_includes_non_root_lock_file_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".meta")).unwrap();
+        let manifest =
+            Manifest::parse(r#"{ "target": "t", "lock-file": ".meta/skills.lock" }"#).unwrap();
+        let set = watch_set(tmp.path(), Some(&manifest));
+        assert_eq!(set, vec![tmp.path().join(".meta")]);
+
+        // Root-level lock (the default) adds nothing: the non-recursive root
+        // watch already covers it.
+        let manifest = Manifest::parse(r#"{ "target": "t" }"#).unwrap();
+        assert!(watch_set(tmp.path(), Some(&manifest)).is_empty());
     }
 
     #[tokio::test]
