@@ -1,0 +1,16 @@
+[package]
+name = "ai_skills"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+publish = false
+
+# Standalone: deliberately NOT a member of the root native workspace
+# (this crate targets wasm32-wasip2).
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.7.0"

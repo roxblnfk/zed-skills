@@ -1,0 +1,13 @@
+name = "Skills JSON"
+grammar = "json"
+# Suffix match: catches files named exactly `skills.json` / `skills.lock`
+# (and `*.skills.json`) without hijacking plain .json files — the longer
+# suffix wins over the built-in JSON language's `json`.
+path_suffixes = ["skills.json", "skills.lock"]
+autoclose_before = ",]}"
+brackets = [
+    { start = "{", end = "}", close = true, surround = true, newline = true },
+    { start = "[", end = "]", close = true, surround = true, newline = true },
+    { start = "\"", end = "\"", close = true, surround = true, newline = false, not_in = ["string"] },
+]
+tab_size = 2

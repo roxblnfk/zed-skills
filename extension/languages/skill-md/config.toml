@@ -1,0 +1,16 @@
+name = "Skill Markdown"
+grammar = "markdown"
+# Matches files named exactly `SKILL.md` (case-sensitive); everything else
+# ending in .md stays with the built-in Markdown language.
+path_suffixes = ["SKILL.md"]
+block_comment = { start = "<!--", prefix = "", end = "-->", tab_size = 1 }
+autoclose_before = ";:.,=}])>"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = false, newline = false },
+    { start = "`", end = "`", close = false, newline = false },
+    { start = "*", end = "*", close = false, newline = false, surround = true },
+]
+tab_size = 2

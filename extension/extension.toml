@@ -1,0 +1,29 @@
+id = "ai-skills"
+name = "AI Skills"
+description = "Manage AI agent skills: syntax highlighting and live diagnostics for skills.json and SKILL.md via the `skills` CLI language server."
+version = "0.1.0"
+schema_version = 1
+authors = ["roxblnfk"]
+repository = "https://github.com/roxblnfk/zed-skills"
+
+capabilities = [
+    # Download prebuilt `skills` binaries from our GitHub releases only.
+    { kind = "download_file", host = "github.com", path = ["roxblnfk", "zed-skills", "releases", "download", "**"] },
+    # Run the `skills` binary as the language server (`skills lsp`).
+    { kind = "process:exec", command = "skills", args = ["lsp"] },
+]
+
+# tree-sitter-json v0.24.8 — same 0.24 line Zed core pins for its built-in JSON language.
+[grammars.json]
+repository = "https://github.com/tree-sitter/tree-sitter-json"
+rev = "ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24"
+
+# Same rev Zed core pins for tree-sitter-md; the block grammar lives in a subdirectory.
+[grammars.markdown]
+repository = "https://github.com/tree-sitter-grammars/tree-sitter-markdown"
+rev = "9a23c1a96c0513d8fc6520972beedd419a973539"
+path = "tree-sitter-markdown"
+
+[language_servers.skills]
+name = "Skills Language Server"
+languages = ["Skills JSON", "Skill Markdown"]

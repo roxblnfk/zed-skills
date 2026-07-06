@@ -1,5 +1,7 @@
 [workspace]
 resolver = "3"
+# The Zed extension targets wasm32-wasip2 and builds standalone (own [workspace] table).
+exclude = ["extension"]
 members = [
     "crates/skills-core",
     "crates/skills-providers",
