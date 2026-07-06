@@ -39,9 +39,7 @@ async fn dir_provider_satisfies_vendor_contract() {
     assert_eq!(refs.len(), 1);
     assert_eq!(refs[0].name.as_str(), "dir/skills-src");
 
-    let cache = Cache {
-        root: tmp.path().join(".skills-cache"),
-    };
+    let cache = Cache::new(tmp.path().join(".skills-cache"));
     let locators: Vec<Arc<dyn SkillLocator>> = vec![Arc::new(DeclaredLocator)];
     let mv = run_vendor_contract(
         refs[0].vendor.as_ref(),

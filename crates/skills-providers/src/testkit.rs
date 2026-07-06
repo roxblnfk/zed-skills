@@ -4,11 +4,37 @@
 //! `materialize()`. Run this against each provider (DirProvider in M1;
 //! GitHub/GitLab reuse it in M2 with wiremock-backed vendors).
 
+use std::io::Write;
 use std::sync::Arc;
 
 use skills_core::domain::MaterializedVendor;
 use skills_core::pipeline::scan::scan_vendor;
 use skills_core::traits::{Cache, SkillLocator, Vendor};
+
+/// Build an in-memory zip archive for test fixtures. Each entry is
+/// `(name, Some(content))` for a file or `(name, None)` for a directory.
+/// Entry names are written verbatim — including intentionally malicious
+/// ones for zip-slip tests.
+pub fn build_zip(entries: &[(&str, Option<&str>)]) -> Vec<u8> {
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    for (name, content) in entries {
+        match content {
+            None => writer
+                .add_directory(name.to_string(), options)
+                .expect("add zip dir"),
+            Some(content) => {
+                writer
+                    .start_file(name.to_string(), options)
+                    .expect("start zip file");
+                writer
+                    .write_all(content.as_bytes())
+                    .expect("write zip content");
+            }
+        }
+    }
+    writer.finish().expect("finish zip").into_inner()
+}
 
 /// What the fixture behind the vendor is expected to contain.
 pub struct ContractExpectations {

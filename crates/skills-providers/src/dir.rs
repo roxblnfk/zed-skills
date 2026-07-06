@@ -178,9 +178,7 @@ mod tests {
         let tmp = project(r#"{ "local": { "dir": ["./src"] } }"#);
         std::fs::create_dir_all(tmp.path().join("src")).unwrap();
         let refs = DirProvider.discover(&ctx(&tmp)).await.unwrap();
-        let cache = Cache {
-            root: tmp.path().join(".skills-cache"),
-        };
+        let cache = Cache::new(tmp.path().join(".skills-cache"));
         let mv = refs[0].vendor.materialize(&cache).await.unwrap();
         assert_eq!(mv.root, tmp.path().join("src"));
         assert_eq!(mv.ref_resolved, None);
