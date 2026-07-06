@@ -11,7 +11,8 @@ What it provides:
   conflicts, stale lockfile, `SKILL.md` frontmatter/audit findings.
 - **Code action** "Run skills update" on staleness diagnostics — applies the sync and refreshes.
 - **Runnables & tasks**: ▶ gutter buttons in `skills.json` for whole-manifest and per-vendor
-  sync, plus `skills: update` / `skills: update --dry-run` in the `task: spawn` palette.
+  sync, plus `skills: update` / `skills: update --dry-run` / `skills: check` in the
+  `task: spawn` palette.
   See [Runnables & tasks](#runnables--tasks) — including an important note about `skills` on PATH.
 
 The server starts when a `skills.json`, `skills.lock`, or `SKILL.md` file is opened in a trusted
@@ -61,6 +62,12 @@ bundled with the extension in `languages/skills-json/tasks.json`):
 - On the root `"target"` line → **skills: update** and **skills: update --dry-run**
   (whole-manifest sync).
 
+The palette additionally offers **skills: check** (`skills update --check`): a read-only sync
+check with compact output — it runs the full pipeline including remote ref re-resolution (so it
+catches a vendor that moved while the editor was closed), writes nothing, prints one line when
+in sync, and exits with the dedicated code **5** ("changes pending") plus a per-skill summary
+when the target is out of sync. Conflicts and audit blocks abort with their usual codes (2 / 3).
+
 The same tasks appear in the `task: spawn` palette whenever a `skills.json` / `skills.lock`
 buffer is active (the per-vendor task only shows on its ▶, since it needs the captured package).
 
@@ -71,15 +78,49 @@ Not every entry gets a ▶:
 - **GitLab subgroup packages** (`group/sub/project`, more than one `/`) — same CLI restriction.
 
 Runnable tags (for wiring up your own tasks): `skills-sync-vendor` (per-entry, provides
-`$ZED_CUSTOM_SKILLS_PACKAGE`) and `skills-sync` (whole manifest).
+`$ZED_CUSTOM_SKILLS_PACKAGE`), `skills-sync` (whole manifest) and `skills-check` (the
+`--check` task).
+
+### Automatic sync check on worktree creation
+
+Zed task templates support `"hooks": ["create_worktree"]` — the task runs automatically after
+Zed creates a new **linked Git worktree** (the `git: create worktree` flow). Hooks are honored
+**only for tasks from `.zed/tasks.json` or your global tasks.json** — Zed collects hook tasks
+from file-based task settings exclusively, so the extension cannot ship this behavior in its
+bundled tasks. To get an automatic `skills update --check` in every fresh worktree, add to
+`.zed/tasks.json`:
+
+```json
+[
+  {
+    "label": "skills: check",
+    "command": "skills",
+    "args": ["update", "--check"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "hooks": ["create_worktree"],
+    "reveal": "no_focus",
+    "hide": "on_success",
+    "tags": ["skills-check"]
+  }
+]
+```
+
+`hide: "on_success"` closes the terminal tab when everything is in sync (exit 0); an
+out-of-sync tree exits 5, so the tab stays open showing what would change and the
+`run 'skills update' to apply` hint. Note the hook fires on linked-worktree creation, not on
+every workspace open — for an on-demand check use the bundled **skills: check** palette task.
 
 > **Important — tasks use `skills` from PATH.** Unlike the language server (which downloads its
 > own binary), tasks run in your terminal and invoke whatever `skills` resolves to in PATH. If
 > you have a *different* utility named `skills` (e.g. the PHP
 > [`llm/skills`](https://github.com/roxblnfk/skills) Composer plugin), the tasks will run that
-> instead. To point them at a specific binary, define project tasks in `.zed/tasks.json` with
-> the **same tags** — worktree tasks take precedence over the extension's bundled ones and
-> replace them in the ▶ menu. Ready-made Windows example:
+> instead. This bites the `--check` task and the `create_worktree` hook above especially hard:
+> the PHP tool's `update` command has **no `--check` option**, so the hook would print an
+> unknown-option error in a terminal tab on *every worktree creation* until you apply the
+> override below (use the full path to this project's binary in the hook task too). To point
+> the tasks at a specific binary, define project tasks in `.zed/tasks.json` with the **same
+> tags** — worktree tasks take precedence over the extension's bundled ones and replace them
+> in the ▶ menu. Ready-made Windows example:
 
 ```json
 [
@@ -103,6 +144,13 @@ Runnable tags (for wiring up your own tasks): `skills-sync-vendor` (per-entry, p
     "args": ["update", "$ZED_CUSTOM_SKILLS_PACKAGE"],
     "cwd": "$ZED_WORKTREE_ROOT",
     "tags": ["skills-sync-vendor"]
+  },
+  {
+    "label": "skills: check",
+    "command": "C:\\tools\\skills\\skills.exe",
+    "args": ["update", "--check"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "tags": ["skills-check"]
   }
 ]
 ```

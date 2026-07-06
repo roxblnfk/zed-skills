@@ -19,5 +19,12 @@
     "args": ["update", "$ZED_CUSTOM_SKILLS_PACKAGE"],
     "cwd": "$ZED_WORKTREE_ROOT",
     "tags": ["skills-sync-vendor"]
+  },
+  {
+    "label": "skills: check",
+    "command": "skills",
+    "args": ["update", "--check"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "tags": ["skills-check"]
   }
 ]
