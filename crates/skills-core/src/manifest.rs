@@ -10,6 +10,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ManifestError;
+use crate::lockfile::LOCKFILE_NAME;
 use crate::paths::normalize_rel;
 
 pub const MANIFEST_NAME: &str = "skills.json";
@@ -22,6 +23,9 @@ pub struct Manifest {
     pub schema: Option<String>,
     pub target: Option<String>,
     pub aliases: Option<Vec<String>>,
+    /// Lockfile location, relative to the project root
+    /// (default: `skills.lock`).
+    pub lock_file: Option<String>,
     pub trusted: Option<Vec<String>>,
     pub trusted_replace: Option<bool>,
     pub discovery: Option<bool>,
@@ -259,6 +263,15 @@ impl Manifest {
         }
     }
 
+    /// Effective lockfile path (normalized, `/`-separated, relative to the
+    /// project root; default: `skills.lock`).
+    pub fn effective_lock_file(&self) -> String {
+        match &self.lock_file {
+            Some(l) => normalize_rel(l).unwrap_or_else(|_| LOCKFILE_NAME.to_string()),
+            None => LOCKFILE_NAME.to_string(),
+        }
+    }
+
     /// Effective audit mode (default: off).
     pub fn audit_mode(&self) -> AuditMode {
         self.audit.as_ref().and_then(|a| a.mode).unwrap_or_default()
@@ -326,8 +339,8 @@ impl Manifest {
         };
 
         // aliases
+        let mut alias_norms = HashSet::new();
         if let Some(aliases) = &self.aliases {
-            let mut seen = HashSet::new();
             for (idx, alias) in aliases.iter().enumerate() {
                 let at = || vec![PathSeg::key("aliases"), PathSeg::Index(idx)];
                 match normalize_rel(alias) {
@@ -337,7 +350,7 @@ impl Manifest {
                         format!("alias '{alias}' must not equal the target '{target_norm}'"),
                     )),
                     Ok(norm) => {
-                        if !seen.insert(norm.clone()) {
+                        if !alias_norms.insert(norm.clone()) {
                             issues.push(ManifestIssue::new(
                                 at(),
                                 format!("duplicate alias '{norm}'"),
@@ -345,6 +358,30 @@ impl Manifest {
                         }
                     }
                 }
+            }
+        }
+
+        // lock-file: relative, inside the project root, distinct from the
+        // manifest itself, the target and every alias
+        if let Some(lock) = &self.lock_file {
+            let at = || vec![PathSeg::key("lock-file")];
+            match normalize_rel(lock) {
+                Err(e) => {
+                    issues.push(ManifestIssue::new(at(), format!("invalid lock-file: {e}")));
+                }
+                Ok(norm) if norm == MANIFEST_NAME => issues.push(ManifestIssue::new(
+                    at(),
+                    format!("lock-file must not equal the manifest '{MANIFEST_NAME}'"),
+                )),
+                Ok(norm) if norm == target_norm => issues.push(ManifestIssue::new(
+                    at(),
+                    format!("lock-file '{norm}' must not equal the target '{target_norm}'"),
+                )),
+                Ok(norm) if alias_norms.contains(&norm) => issues.push(ManifestIssue::new(
+                    at(),
+                    format!("lock-file '{norm}' must not equal an alias"),
+                )),
+                Ok(_) => {}
             }
         }
 
@@ -505,6 +542,7 @@ mod tests {
                 "$schema": "https://example.com/skills.schema.json",
                 "target": ".agents/skills",
                 "aliases": [".claude/skills", ".cursor/skills"],
+                "lock-file": ".agents/skills.lock",
                 "trusted": ["acme/*", "acme/skills"],
                 "trusted-replace": false,
                 "discovery": false,
@@ -580,6 +618,76 @@ mod tests {
     #[test]
     fn alias_escaping_root_rejected() {
         assert!(err(r#"{ "aliases": ["../outside"] }"#).contains("invalid alias"));
+    }
+
+    #[test]
+    fn lock_file_defaults_when_absent() {
+        let m = Manifest::parse("{}").unwrap();
+        assert_eq!(m.effective_lock_file(), "skills.lock");
+    }
+
+    #[test]
+    fn custom_lock_file_normalized() {
+        let m = Manifest::parse(r#"{ "lock-file": "./.agents\\skills.lock" }"#).unwrap();
+        assert_eq!(m.effective_lock_file(), ".agents/skills.lock");
+    }
+
+    #[test]
+    fn empty_lock_file_rejected() {
+        assert!(err(r#"{ "lock-file": "" }"#).contains("invalid lock-file"));
+        assert!(err(r#"{ "lock-file": "  " }"#).contains("invalid lock-file"));
+    }
+
+    #[test]
+    fn absolute_lock_file_rejected() {
+        assert!(err(r#"{ "lock-file": "/abs/skills.lock" }"#).contains("invalid lock-file"));
+        assert!(err(r#"{ "lock-file": "C:\\skills.lock" }"#).contains("invalid lock-file"));
+    }
+
+    #[test]
+    fn escaping_lock_file_rejected() {
+        assert!(err(r#"{ "lock-file": "../skills.lock" }"#).contains("invalid lock-file"));
+        assert!(err(r#"{ "lock-file": "a/../../skills.lock" }"#).contains("invalid lock-file"));
+    }
+
+    #[test]
+    fn lock_file_equal_to_manifest_rejected() {
+        let e = err(r#"{ "lock-file": "./skills.json" }"#);
+        assert!(e.contains("must not equal the manifest"), "{e}");
+    }
+
+    #[test]
+    fn lock_file_equal_to_target_rejected() {
+        let e = err(r#"{ "target": ".agents/skills", "lock-file": "./.agents/skills" }"#);
+        assert!(e.contains("must not equal the target"), "{e}");
+        // Also against the default target when `target` is absent.
+        let e = err(r#"{ "lock-file": ".agents/skills" }"#);
+        assert!(e.contains("must not equal the target"), "{e}");
+    }
+
+    #[test]
+    fn lock_file_equal_to_alias_rejected() {
+        let e = err(r#"{ "aliases": [".claude/skills"], "lock-file": "./.claude/skills" }"#);
+        assert!(e.contains("must not equal an alias"), "{e}");
+    }
+
+    #[test]
+    fn valid_lock_file_accepted() {
+        Manifest::parse(r#"{ "lock-file": ".agents/skills.lock" }"#).unwrap();
+        Manifest::parse(r#"{ "lock-file": "skills.lock" }"#).unwrap();
+    }
+
+    #[test]
+    fn validate_issues_anchors_lock_file_field() {
+        let manifest: Manifest = serde_json::from_str(r#"{ "lock-file": "../out.lock" }"#).unwrap();
+        let issues = manifest.validate_issues();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].path, vec![PathSeg::key("lock-file")]);
+        assert!(
+            issues[0].message.contains("invalid lock-file"),
+            "{}",
+            issues[0].message
+        );
     }
 
     #[test]

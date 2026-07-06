@@ -24,6 +24,12 @@
             },
             "uniqueItems": true
         },
+        "lock-file": {
+            "description": "Lockfile location (relative to the project root). Must stay inside the project root and must not equal the target, an alias or skills.json itself.",
+            "type": "string",
+            "minLength": 1,
+            "default": "skills.lock"
+        },
         "trusted": {
             "description": "Trusted vendor patterns: 'vendor/package' or 'vendor/*'.",
             "type": "array",

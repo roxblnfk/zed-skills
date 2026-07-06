@@ -16,7 +16,7 @@ use crate::domain::{Note, ResolvedSkill};
 use crate::error::SyncError;
 use crate::fsutil;
 use crate::link::{self, LinkStatus};
-use crate::lockfile::{LOCKFILE_NAME, LockedSkill, Lockfile};
+use crate::lockfile::{LockedSkill, Lockfile};
 use crate::manifest::AuditMode;
 use crate::paths::rel_to_path;
 use crate::pipeline::ctx::Ctx;
@@ -116,7 +116,19 @@ pub fn sync(ctx: &Ctx, plan: SyncPlan, notes: Vec<Note>) -> Result<SyncReport, S
     for locked in &plan.keep {
         lock.skills.push(locked.clone());
     }
-    lock.save(&ctx.project_root.join(LOCKFILE_NAME))?;
+    // The lockfile location is configurable (`lock-file` manifest option);
+    // create its parent directories for nested paths like
+    // `.agents/skills.lock`.
+    let lock_abs = ctx.lock_abs();
+    if let Some(parent) = lock_abs.parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent).map_err(|source| SyncError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    lock.save(&lock_abs)?;
 
     // Aliases run after the copy step, so the target exists by now. A failed
     // alias does not roll back the copy — it is reported and the CLI exits
@@ -396,9 +408,7 @@ mod tests {
             std::fs::read_to_string(ctx.target_abs.join("alpha").join("SKILL.md")).unwrap(),
             "hello"
         );
-        let lock = Lockfile::load(&f.project.join(LOCKFILE_NAME))
-            .unwrap()
-            .unwrap();
+        let lock = Lockfile::load(&ctx.lock_abs()).unwrap().unwrap();
         assert_eq!(lock.skills.len(), 1);
         assert_eq!(lock.skills[0].files, ["SKILL.md", "refs/a.md"]);
         // No staging leftovers.
@@ -408,6 +418,34 @@ mod tests {
             .filter(|n| n.starts_with(".skills-staging"))
             .collect();
         assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    #[test]
+    fn custom_lock_file_written_with_parent_dirs_created() {
+        let f = fixture();
+        // `meta/` does not exist before the sync; the default root location
+        // must stay untouched.
+        std::fs::write(
+            f.project.join(MANIFEST_NAME),
+            r#"{ "lock-file": "meta/skills.lock" }"#,
+        )
+        .unwrap();
+        let skill = donor_skill(&f, "alpha", &[("SKILL.md", "hello")]);
+        let ctx = ctx(&f, false);
+        assert_eq!(ctx.lock_abs(), f.project.join("meta").join("skills.lock"));
+
+        let plan = SyncPlan {
+            add: vec![pass(skill)],
+            ..Default::default()
+        };
+        sync(&ctx, plan, vec![]).unwrap();
+
+        let lock = Lockfile::load(&ctx.lock_abs()).unwrap().unwrap();
+        assert_eq!(lock.skills.len(), 1);
+        assert!(
+            !f.project.join("skills.lock").exists(),
+            "default location must not be written when lock-file is set"
+        );
     }
 
     #[test]
@@ -528,7 +566,7 @@ mod tests {
         assert!(report.dry_run);
         assert_eq!(report.count(SyncAction::Add), 1);
         assert!(!ctx.target_abs.exists());
-        assert!(!f.project.join(LOCKFILE_NAME).exists());
+        assert!(!ctx.lock_abs().exists());
     }
 
     #[test]
@@ -564,9 +602,7 @@ mod tests {
             keep: vec![old("kept", "k", vec!["SKILL.md".into()])],
         };
         sync(&ctx, plan, vec![]).unwrap();
-        let lock = Lockfile::load(&f.project.join(LOCKFILE_NAME))
-            .unwrap()
-            .unwrap();
+        let lock = Lockfile::load(&ctx.lock_abs()).unwrap().unwrap();
         let ids: Vec<&str> = lock.skills.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["added", "kept", "skipped", "updated"]);
     }
@@ -731,9 +767,7 @@ mod tests {
         };
         sync(&ctx, plan, vec![]).unwrap();
 
-        let lock = Lockfile::load(&f.project.join(LOCKFILE_NAME))
-            .unwrap()
-            .unwrap();
+        let lock = Lockfile::load(&ctx.lock_abs()).unwrap().unwrap();
         let audit_of = |id: &str| {
             lock.skills
                 .iter()

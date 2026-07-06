@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::error::PrepareError;
-use crate::lockfile::{LOCKFILE_NAME, Lockfile};
+use crate::lockfile::Lockfile;
 use crate::manifest::{MANIFEST_NAME, Manifest};
 use crate::paths::{normalize_rel, rel_to_path};
 use crate::pattern::VendorPattern;
@@ -55,6 +55,18 @@ pub struct Ctx {
 }
 
 impl Ctx {
+    /// Normalized `/`-separated lockfile path, relative to the project root
+    /// (`lock-file` manifest option; default `skills.lock`).
+    pub fn lock_rel(&self) -> String {
+        self.manifest.effective_lock_file()
+    }
+
+    /// Absolute lockfile path. Prepare reads the lock from here; Sync writes
+    /// it here (creating parent directories as needed).
+    pub fn lock_abs(&self) -> PathBuf {
+        self.project_root.join(rel_to_path(&self.lock_rel()))
+    }
+
     /// Effective discovery flag: CLI override beats the manifest value.
     pub fn discovery_enabled(&self) -> bool {
         self.run
@@ -86,7 +98,6 @@ pub struct PrepareOptions {
 /// Stage 1 — Prepare.
 pub fn prepare(project_root: &Path, options: PrepareOptions) -> Result<Ctx, PrepareError> {
     let manifest = Manifest::load(&project_root.join(MANIFEST_NAME))?;
-    let lockfile = Lockfile::load(&project_root.join(LOCKFILE_NAME))?.unwrap_or_default();
 
     let target_rel = match &options.target_override {
         Some(t) => normalize_rel(t).map_err(PrepareError::InvalidTarget)?,
@@ -95,6 +106,22 @@ pub fn prepare(project_root: &Path, options: PrepareOptions) -> Result<Ctx, Prep
     let target_abs = project_root.join(rel_to_path(&target_rel));
 
     let aliases = resolve_aliases(&manifest, &options.alias_override, &target_rel)?;
+
+    // The lockfile path comes from the manifest only (validated there);
+    // re-check it against the CLI-overridable target/aliases so a `--target`
+    // or `--alias` shift cannot collide with it.
+    let lock_rel = manifest.effective_lock_file();
+    if lock_rel == target_rel {
+        return Err(PrepareError::InvalidTarget(format!(
+            "target '{target_rel}' must not equal the lock file '{lock_rel}'"
+        )));
+    }
+    if aliases.contains(&lock_rel) {
+        return Err(PrepareError::InvalidAlias(format!(
+            "alias '{lock_rel}' must not equal the lock file"
+        )));
+    }
+    let lockfile = Lockfile::load(&project_root.join(rel_to_path(&lock_rel)))?.unwrap_or_default();
 
     Ok(Ctx {
         project_root: project_root.to_path_buf(),
@@ -272,6 +299,97 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, PrepareError::InvalidAlias(_)), "{err:?}");
+    }
+
+    #[test]
+    fn lock_path_defaults_to_root_skills_lock() {
+        let tmp = project("{}");
+        let ctx = prepare(tmp.path(), PrepareOptions::default()).unwrap();
+        assert_eq!(ctx.lock_rel(), "skills.lock");
+        assert_eq!(ctx.lock_abs(), tmp.path().join("skills.lock"));
+    }
+
+    #[test]
+    fn custom_lock_path_is_resolved_and_read() {
+        let tmp = project(r#"{ "lock-file": ".agents/skills.lock" }"#);
+        let agents = tmp.path().join(".agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(
+            agents.join("skills.lock"),
+            r#"{ "version": 1, "skills": [ {
+                "id": "s", "vendor": "dir/src",
+                "origin": { "type": "local", "path": "./src" },
+                "content_hash": "h", "files": ["SKILL.md"]
+            } ] }"#,
+        )
+        .unwrap();
+        // A stale lock at the default root location must be IGNORED.
+        std::fs::write(
+            tmp.path().join("skills.lock"),
+            r#"{ "version": 1, "skills": [] }"#,
+        )
+        .unwrap();
+
+        let ctx = prepare(tmp.path(), PrepareOptions::default()).unwrap();
+        assert_eq!(ctx.lock_rel(), ".agents/skills.lock");
+        assert_eq!(ctx.lock_abs(), agents.join("skills.lock"));
+        assert_eq!(
+            ctx.lockfile.skills.len(),
+            1,
+            "must read the configured path"
+        );
+    }
+
+    #[test]
+    fn old_root_lock_ignored_when_lock_file_moved() {
+        // Manifest points elsewhere; only a root skills.lock exists → treated
+        // as absent (no auto-migration), everything will plan as add.
+        let tmp = project(r#"{ "lock-file": "meta/skills.lock" }"#);
+        std::fs::write(
+            tmp.path().join("skills.lock"),
+            r#"{ "version": 1, "skills": [ {
+                "id": "s", "vendor": "dir/src",
+                "origin": { "type": "local", "path": "./src" },
+                "content_hash": "h", "files": ["SKILL.md"]
+            } ] }"#,
+        )
+        .unwrap();
+        let ctx = prepare(tmp.path(), PrepareOptions::default()).unwrap();
+        assert!(ctx.lockfile.skills.is_empty());
+    }
+
+    #[test]
+    fn cli_target_equal_to_lock_file_rejected() {
+        let tmp = project(r#"{ "lock-file": "meta/lock" }"#);
+        let err = prepare(
+            tmp.path(),
+            PrepareOptions {
+                target_override: Some("./meta/lock".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, PrepareError::InvalidTarget(m) if m.contains("lock file")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn cli_alias_equal_to_lock_file_rejected() {
+        let tmp = project(r#"{ "lock-file": "meta/lock" }"#);
+        let err = prepare(
+            tmp.path(),
+            PrepareOptions {
+                alias_override: Some(vec!["meta/lock".to_string()]),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, PrepareError::InvalidAlias(m) if m.contains("lock file")),
+            "{err:?}"
+        );
     }
 
     #[test]
