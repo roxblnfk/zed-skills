@@ -86,6 +86,10 @@ pub enum MaterializeError {
         #[source]
         source: io::Error,
     },
+    /// Offline (cache-only) materialization found no usable cache entry.
+    /// Not a failure of the vendor — it just has not been downloaded yet.
+    #[error("vendor {vendor}: not fetched yet — run `skills update`")]
+    NotFetched { vendor: VendorName },
     #[error("materialize task panicked: {0}")]
     Task(String),
 }

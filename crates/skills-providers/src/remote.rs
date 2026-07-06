@@ -73,12 +73,18 @@ pub(crate) struct PackageSpec {
 }
 
 /// Materialize a by-package remote vendor: resolve the ref, serve from the
-/// cache when possible, otherwise download + extract into the cache.
+/// cache when possible, otherwise download + extract into the cache. In
+/// offline (cache-only) mode nothing is downloaded — a miss is
+/// [`MaterializeError::NotFetched`].
 pub(crate) async fn materialize_package(
     spec: &PackageSpec,
     api: &dyn HostApi,
     cache: &Cache,
 ) -> Result<skills_core::domain::MaterializedVendor, MaterializeError> {
+    if cache.offline {
+        return materialize_package_offline(spec, cache);
+    }
+
     let vendor_err = |message: String| MaterializeError::Vendor {
         vendor: spec.name.clone(),
         message,
@@ -126,6 +132,88 @@ pub(crate) async fn materialize_package(
         filter: skills_core::domain::SkillsFilter::All,
         source_hint: skills_core::domain::SourceHint::Probe,
     })
+}
+
+/// Offline (cache-only) materialization: no API calls, no downloads. The
+/// declared ref is resolved against the *cached* refs of this entry — every
+/// completed cache dir's marker file records the resolved ref it holds:
+///
+/// - verbatim ref → itself;
+/// - caret constraint → highest cached tag in range;
+/// - absent ref → highest cached stable tag, else highest cached semver tag,
+///   else the single cached ref (a previously resolved default branch).
+///
+/// Anything unresolvable (or a resolved ref without a completed cache dir)
+/// is [`MaterializeError::NotFetched`] — the caller surfaces "run `skills
+/// update`" instead of failing the analysis.
+fn materialize_package_offline(
+    spec: &PackageSpec,
+    cache: &Cache,
+) -> Result<skills_core::domain::MaterializedVendor, MaterializeError> {
+    let not_fetched = || MaterializeError::NotFetched {
+        vendor: spec.name.clone(),
+    };
+    let entry_root = cache
+        .root
+        .join(cachepath::encode_segment(spec.from))
+        .join(cachepath::host_segment(spec.host.as_deref()))
+        .join(cachepath::encode_segment(&spec.package));
+
+    let resolved = match spec.ref_declared.as_deref() {
+        Some(r#ref) if !refresolver::is_caret(r#ref) => r#ref.to_string(),
+        declared => {
+            let cached = cached_refs(&entry_root);
+            let picked = match declared {
+                Some(constraint) => refresolver::resolve_caret(constraint, &cached),
+                None => refresolver::pick_highest_stable(&cached)
+                    .or_else(|| refresolver::pick_highest_any(&cached))
+                    .or(match cached.as_slice() {
+                        [single] => Some(single.as_str()),
+                        _ => None,
+                    }),
+            };
+            picked.ok_or_else(not_fetched)?.to_string()
+        }
+    };
+
+    let dir = cachepath::entry_dir(
+        &cache.root,
+        spec.from,
+        spec.host.as_deref(),
+        &spec.package,
+        &resolved,
+    );
+    if !cachepath::is_hit(&dir) {
+        return Err(not_fetched());
+    }
+
+    Ok(skills_core::domain::MaterializedVendor {
+        name: spec.name.clone(),
+        origin: spec.origin.clone(),
+        root: dir,
+        ref_resolved: Some(resolved),
+        filter: skills_core::domain::SkillsFilter::All,
+        source_hint: skills_core::domain::SourceHint::Probe,
+    })
+}
+
+/// Resolved refs recorded by the markers of completed cache dirs under one
+/// entry root (each marker file stores the resolved ref it was written for).
+fn cached_refs(entry_root: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(entry_root) else {
+        return Vec::new();
+    };
+    let mut refs: Vec<String> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|dir| cachepath::is_hit(dir))
+        .filter_map(|dir| std::fs::read_to_string(dir.join(cachepath::CACHE_MARKER)).ok())
+        .map(|note| note.trim().to_string())
+        .filter(|note| !note.is_empty())
+        .collect();
+    refs.sort();
+    refs.dedup();
+    refs
 }
 
 /// Extract downloaded archive bytes into `dir` and mark the entry complete.
@@ -361,6 +449,123 @@ mod tests {
 
         let a = api(&["weird"], Some("develop"));
         assert_eq!(resolve_ref(&a, "a/b", None).await.unwrap(), "develop");
+    }
+
+    /// HostApi that must never be reached (offline contract).
+    struct NoApi;
+
+    #[async_trait]
+    impl HostApi for NoApi {
+        async fn list_tags(&self) -> Result<Vec<String>, String> {
+            panic!("offline materialize must not call the API");
+        }
+        async fn default_branch(&self) -> Result<String, String> {
+            panic!("offline materialize must not call the API");
+        }
+        async fn download_archive(&self, _r: &str) -> Result<Vec<u8>, String> {
+            panic!("offline materialize must not call the API");
+        }
+    }
+
+    fn spec(package: &str, r#ref: Option<&str>) -> PackageSpec {
+        PackageSpec {
+            name: VendorName::new(package),
+            origin: skills_core::domain::Origin::Remote {
+                host: "github.com".to_string(),
+                package: package.to_string(),
+                r#ref: r#ref.map(str::to_string),
+            },
+            from: "github",
+            host: None,
+            package: package.to_string(),
+            ref_declared: r#ref.map(str::to_string),
+        }
+    }
+
+    /// Simulate a previous online run: completed cache dir + ref marker.
+    fn seed_cache(cache: &Cache, package: &str, resolved: &str) -> PathBuf {
+        let dir = cachepath::entry_dir(&cache.root, "github", None, package, resolved);
+        std::fs::create_dir_all(&dir).unwrap();
+        cachepath::write_marker(&dir, resolved).unwrap();
+        dir
+    }
+
+    fn offline_cache(tmp: &tempfile::TempDir) -> Cache {
+        let mut cache = Cache::new(tmp.path().join("cache"));
+        cache.offline = true;
+        cache
+    }
+
+    #[tokio::test]
+    async fn offline_verbatim_ref_hits_cache_or_reports_not_fetched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = offline_cache(&tmp);
+
+        let err = materialize_package(&spec("a/b", Some("v1.0.0")), &NoApi, &cache)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MaterializeError::NotFetched { .. }), "{err}");
+
+        let dir = seed_cache(&cache, "a/b", "v1.0.0");
+        let mv = materialize_package(&spec("a/b", Some("v1.0.0")), &NoApi, &cache)
+            .await
+            .unwrap();
+        assert_eq!(mv.root, dir);
+        assert_eq!(mv.ref_resolved.as_deref(), Some("v1.0.0"));
+    }
+
+    #[tokio::test]
+    async fn offline_absent_ref_resolves_from_cached_markers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = offline_cache(&tmp);
+        seed_cache(&cache, "a/b", "v1.0.0");
+        seed_cache(&cache, "a/b", "v1.2.0");
+
+        let mv = materialize_package(&spec("a/b", None), &NoApi, &cache)
+            .await
+            .unwrap();
+        assert_eq!(mv.ref_resolved.as_deref(), Some("v1.2.0"));
+    }
+
+    #[tokio::test]
+    async fn offline_absent_ref_uses_single_cached_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = offline_cache(&tmp);
+        // A previously resolved default branch is not a semver tag.
+        seed_cache(&cache, "a/b", "main");
+
+        let mv = materialize_package(&spec("a/b", None), &NoApi, &cache)
+            .await
+            .unwrap();
+        assert_eq!(mv.ref_resolved.as_deref(), Some("main"));
+    }
+
+    #[tokio::test]
+    async fn offline_caret_resolves_within_cached_tags() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = offline_cache(&tmp);
+        seed_cache(&cache, "a/b", "v1.4.0");
+        seed_cache(&cache, "a/b", "v2.0.0");
+
+        let mv = materialize_package(&spec("a/b", Some("^1.2")), &NoApi, &cache)
+            .await
+            .unwrap();
+        assert_eq!(mv.ref_resolved.as_deref(), Some("v1.4.0"));
+
+        let err = materialize_package(&spec("a/b", Some("^3")), &NoApi, &cache)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MaterializeError::NotFetched { .. }), "{err}");
+    }
+
+    #[tokio::test]
+    async fn offline_empty_cache_is_not_fetched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = offline_cache(&tmp);
+        let err = materialize_package(&spec("a/b", None), &NoApi, &cache)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MaterializeError::NotFetched { .. }), "{err}");
     }
 
     #[tokio::test]

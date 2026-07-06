@@ -19,6 +19,10 @@ pub struct Cache {
     /// `skills update --refresh`: delete matching cache entries before
     /// materializing (forces re-download; there is no TTL otherwise).
     pub refresh: bool,
+    /// Cache-only materialization (no network): a remote vendor missing from
+    /// the cache yields [`crate::error::MaterializeError::NotFetched`]
+    /// instead of downloading. Used by analysis frontends (the LSP server).
+    pub offline: bool,
 }
 
 impl Cache {
@@ -26,6 +30,7 @@ impl Cache {
         Cache {
             root,
             refresh: false,
+            offline: false,
         }
     }
 }

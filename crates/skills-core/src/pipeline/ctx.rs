@@ -106,6 +106,7 @@ pub fn prepare(project_root: &Path, options: PrepareOptions) -> Result<Ctx, Prep
         cache: Cache {
             root: project_root.join(CACHE_DIR),
             refresh: options.refresh,
+            offline: false,
         },
         dry_run: options.dry_run,
         run: options.run,

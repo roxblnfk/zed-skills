@@ -130,6 +130,11 @@ impl Vendor for UrlVendor {
         }
 
         let dir = cachepath::url_dir(&cache.root, &self.url, &self.ref_label());
+        if cache.offline && !cachepath::is_hit(&dir) {
+            return Err(MaterializeError::NotFetched {
+                vendor: self.name.clone(),
+            });
+        }
         if !cachepath::is_hit(&dir) {
             let headers = vec![
                 ("Accept".to_string(), "*/*".to_string()),
@@ -282,6 +287,43 @@ mod tests {
         let cache = Cache::new(tmp.path().join("cache"));
         let err = vendor.materialize(&cache).await.unwrap_err();
         assert!(err.to_string().contains("HTTP 404"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn offline_miss_is_not_fetched_and_no_request_is_made() {
+        let http = Arc::new(MockHttp::new().route("https://example.com/a.zip", 200, fixture_zip()));
+        let vendor = UrlVendor::new(
+            Arc::clone(&http) as Arc<dyn HttpClient>,
+            "https://example.com/a.zip".to_string(),
+            None,
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cache = Cache::new(tmp.path().join("cache"));
+        cache.offline = true;
+        let err = vendor.materialize(&cache).await.unwrap_err();
+        assert!(
+            matches!(err, MaterializeError::NotFetched { .. }),
+            "{err:?}"
+        );
+        assert_eq!(http.request_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn offline_hit_serves_from_cache_without_requests() {
+        let http = Arc::new(MockHttp::new().route("https://example.com/a.zip", 200, fixture_zip()));
+        let vendor = UrlVendor::new(
+            Arc::clone(&http) as Arc<dyn HttpClient>,
+            "https://example.com/a.zip".to_string(),
+            None,
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cache = Cache::new(tmp.path().join("cache"));
+        let online = vendor.materialize(&cache).await.unwrap();
+
+        cache.offline = true;
+        let offline = vendor.materialize(&cache).await.unwrap();
+        assert_eq!(offline.root, online.root);
+        assert_eq!(http.request_count(), 1);
     }
 
     #[tokio::test]
