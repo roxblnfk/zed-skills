@@ -1,0 +1,5 @@
+{
+    "name": "clash/skills-conflict",
+    "type": "library",
+    "extra": { "skills": { "source": "skills" } }
+}

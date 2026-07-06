@@ -1,0 +1,5 @@
+{
+    "name": "acme/skills-basic",
+    "type": "library",
+    "extra": { "skills": { "source": ".claude/skills" } }
+}

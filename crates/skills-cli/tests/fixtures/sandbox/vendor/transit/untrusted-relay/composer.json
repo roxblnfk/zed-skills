@@ -1,0 +1,8 @@
+{
+    "name": "transit/untrusted-relay",
+    "type": "library",
+    "require": {
+        "evil/payload": "@dev",
+        "clash/skills-conflict": "@dev"
+    }
+}

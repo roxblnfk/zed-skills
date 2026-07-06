@@ -1,0 +1,26 @@
+---
+source: crates/skills-cli/tests/e2e_composer.rs
+expression: out
+---
+Target: .agents/skills
+
+acme/skills-basic [direct-dep]:
+  code-review  Reviews code changes before commit        not-synced
+  greeting     Greets the user politely                  not-synced
+
+acme/skills-pro [direct-dep]:
+  migrate      Plans database migrations                 not-synced
+  refactor     Suggests refactorings                     not-synced
+
+spiral/skills-demo [builtin]:
+  demo         Demo skill from a builtin-trusted vendor  not-synced
+
+Skipped:
+  acme/skills-broken      malformed: extra.skills.source must not escape the package root
+  acme/skills-undeclared  not-declared
+  clash/skills-conflict   untrusted
+  evil/payload            untrusted
+  nested/skills-tree      not-declared
+  oddball/loose-skills    not-declared
+
+[hint] 3 package(s) ship undeclared skills; rerun with --discovery to include them, or set "discovery": true in skills.json

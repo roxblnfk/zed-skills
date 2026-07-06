@@ -1,0 +1,10 @@
+{
+    "name": "sandbox/project",
+    "description": "Fixture consumer project for the composer-provider e2e tests",
+    "type": "project",
+    "require": {
+        "php": ">=8.1",
+        "acme/skills-basic": "@dev",
+        "acme/skills-pro": "@dev"
+    }
+}

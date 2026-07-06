@@ -1,0 +1,5 @@
+{
+    "name": "acme/skills-rootlike",
+    "type": "library",
+    "extra": { "skills": { "aliases": [".claude/skills"], "auto-sync": true } }
+}

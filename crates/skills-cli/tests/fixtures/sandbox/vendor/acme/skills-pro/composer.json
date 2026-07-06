@@ -1,0 +1,5 @@
+{
+    "name": "acme/skills-pro",
+    "type": "library",
+    "extra": { "skills": { "source": "resources/skills" } }
+}

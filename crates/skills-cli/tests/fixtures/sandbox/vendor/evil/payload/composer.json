@@ -1,0 +1,5 @@
+{
+    "name": "evil/payload",
+    "type": "library",
+    "extra": { "skills": { "source": "skills" } }
+}

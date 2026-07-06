@@ -1,0 +1,5 @@
+{
+    "name": "spiral/skills-demo",
+    "type": "library",
+    "extra": { "skills": { "source": "skills" } }
+}

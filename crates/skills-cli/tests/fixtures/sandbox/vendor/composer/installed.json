@@ -1,0 +1,80 @@
+{
+    "packages": [
+        {
+            "name": "acme/skills-basic",
+            "version": "dev-main",
+            "type": "library",
+            "extra": { "skills": { "source": ".claude/skills" } },
+            "install-path": "../acme/skills-basic"
+        },
+        {
+            "name": "acme/skills-broken",
+            "version": "dev-main",
+            "type": "library",
+            "extra": { "skills": { "source": "../escape" } },
+            "install-path": "../acme/skills-broken"
+        },
+        {
+            "name": "acme/skills-pro",
+            "version": "dev-main",
+            "type": "library",
+            "extra": { "skills": { "source": "resources/skills" } },
+            "install-path": "../acme/skills-pro"
+        },
+        {
+            "name": "acme/skills-rootlike",
+            "version": "dev-main",
+            "type": "library",
+            "extra": { "skills": { "aliases": [".claude/skills"], "auto-sync": true } },
+            "install-path": "../acme/skills-rootlike"
+        },
+        {
+            "name": "acme/skills-undeclared",
+            "version": "dev-main",
+            "type": "library",
+            "install-path": "../acme/skills-undeclared"
+        },
+        {
+            "name": "clash/skills-conflict",
+            "version": "dev-main",
+            "type": "library",
+            "extra": { "skills": { "source": "skills" } },
+            "install-path": "../clash/skills-conflict"
+        },
+        {
+            "name": "evil/payload",
+            "version": "dev-main",
+            "type": "library",
+            "extra": { "skills": { "source": "skills" } },
+            "install-path": "../evil/payload"
+        },
+        {
+            "name": "nested/skills-tree",
+            "version": "dev-main",
+            "type": "library",
+            "install-path": "../nested/skills-tree"
+        },
+        {
+            "name": "oddball/loose-skills",
+            "version": "dev-main",
+            "type": "library",
+            "install-path": "../oddball/loose-skills"
+        },
+        {
+            "name": "spiral/skills-demo",
+            "version": "dev-main",
+            "type": "library",
+            "extra": { "skills": { "source": "skills" } },
+            "install-path": "../spiral/skills-demo"
+        },
+        {
+            "name": "transit/untrusted-relay",
+            "version": "dev-main",
+            "type": "library",
+            "require": { "evil/payload": "@dev", "clash/skills-conflict": "@dev" },
+            "install-path": "../transit/untrusted-relay"
+        }
+    ],
+    "dev": true,
+    "dev-package-names": []
+}
