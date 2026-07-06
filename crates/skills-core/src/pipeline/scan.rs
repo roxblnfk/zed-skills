@@ -162,6 +162,7 @@ mod tests {
             root: root.to_path_buf(),
             ref_resolved: None,
             filter: SkillsFilter::All,
+            source_hint: crate::domain::SourceHint::ExplicitRoot,
         }
     }
 

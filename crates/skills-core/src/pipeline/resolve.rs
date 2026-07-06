@@ -125,6 +125,7 @@ mod tests {
             root: PathBuf::from(name),
             ref_resolved: None,
             filter,
+            source_hint: crate::domain::SourceHint::ExplicitRoot,
         }
     }
 

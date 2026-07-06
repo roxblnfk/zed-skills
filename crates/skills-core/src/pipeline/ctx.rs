@@ -7,11 +7,29 @@ use crate::error::PrepareError;
 use crate::lockfile::{LOCKFILE_NAME, Lockfile};
 use crate::manifest::{MANIFEST_NAME, Manifest};
 use crate::paths::{normalize_rel, rel_to_path};
+use crate::pattern::VendorPattern;
 use crate::traits::Cache;
 
 /// Directory (relative to the project root) used to cache remote vendor
 /// content. Created lazily; unused by local providers.
 pub const CACHE_DIR: &str = ".skills-cache";
+
+/// Per-invocation options that shape the run (positional filters, trust
+/// grants, discovery opt-in). Lives in [`Ctx`] so the TrustFilter stage can
+/// consult it.
+#[derive(Debug, Clone, Default)]
+pub struct RunOptions {
+    /// Positional `PACKAGE` / `VENDOR/*` arguments: filter + implicit trust
+    /// + per-package discovery grant. Empty = all donors.
+    pub packages: Vec<VendorPattern>,
+    /// `--trust=PATTERN` entries, added on top of project + builtin lists.
+    pub trust: Vec<VendorPattern>,
+    /// `--discovery` CLI override; `None` defers to the manifest flag.
+    pub discovery: Option<bool>,
+    /// A `--from=ID` provider scope is active: donors outside the scope keep
+    /// their lockfile entries instead of being pruned.
+    pub scoped: bool,
+}
 
 /// Immutable context threaded through all pipeline stages.
 #[derive(Debug, Clone)]
@@ -25,6 +43,22 @@ pub struct Ctx {
     pub target_abs: PathBuf,
     pub cache: Cache,
     pub dry_run: bool,
+    pub run: RunOptions,
+}
+
+impl Ctx {
+    /// Effective discovery flag: CLI override beats the manifest value.
+    pub fn discovery_enabled(&self) -> bool {
+        self.run
+            .discovery
+            .unwrap_or_else(|| self.manifest.discovery.unwrap_or(false))
+    }
+
+    /// A partial run (positional filters or `--from` scope) never prunes
+    /// lockfile entries of out-of-scope donors.
+    pub fn partial_sync(&self) -> bool {
+        self.run.scoped || !self.run.packages.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -34,6 +68,8 @@ pub struct PrepareOptions {
     pub dry_run: bool,
     /// CLI `--refresh`: force re-download of cached remote archives.
     pub refresh: bool,
+    /// Per-invocation filters and trust grants.
+    pub run: RunOptions,
 }
 
 /// Stage 1 — Prepare.
@@ -58,6 +94,7 @@ pub fn prepare(project_root: &Path, options: PrepareOptions) -> Result<Ctx, Prep
             refresh: options.refresh,
         },
         dry_run: options.dry_run,
+        run: options.run,
     })
 }
 
@@ -96,7 +133,7 @@ mod tests {
             PrepareOptions {
                 target_override: Some("./override/here".to_string()),
                 dry_run: true,
-                refresh: false,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -111,8 +148,7 @@ mod tests {
             tmp.path(),
             PrepareOptions {
                 target_override: Some("../escape".to_string()),
-                dry_run: false,
-                refresh: false,
+                ..Default::default()
             },
         )
         .unwrap_err();

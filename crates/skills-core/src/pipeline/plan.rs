@@ -15,6 +15,9 @@ pub struct SyncPlan {
     pub skip: Vec<(ResolvedSkill, LockedSkill)>,
     /// Lock entries whose donor (or skill) disappeared — to be pruned.
     pub remove: Vec<LockedSkill>,
+    /// Lock entries out of scope of a partial run (positional filters,
+    /// `--from`): carried into the new lockfile untouched, never pruned.
+    pub keep: Vec<LockedSkill>,
 }
 
 impl SyncPlan {
@@ -23,7 +26,10 @@ impl SyncPlan {
     }
 }
 
-pub fn plan(lockfile: &Lockfile, audited: &[AuditedSkill]) -> SyncPlan {
+/// Diff the audited skills against the lockfile. `partial` marks a scoped
+/// run (positional filters / `--from`): lock entries whose skill is absent
+/// from the run are then retained instead of pruned.
+pub fn plan(lockfile: &Lockfile, audited: &[AuditedSkill], partial: bool) -> SyncPlan {
     let mut plan = SyncPlan::default();
     for entry in audited {
         let skill = &entry.skill;
@@ -38,13 +44,18 @@ pub fn plan(lockfile: &Lockfile, audited: &[AuditedSkill]) -> SyncPlan {
     for locked in &lockfile.skills {
         let still_present = audited.iter().any(|a| a.skill.id.as_str() == locked.id);
         if !still_present {
-            plan.remove.push(locked.clone());
+            if partial {
+                plan.keep.push(locked.clone());
+            } else {
+                plan.remove.push(locked.clone());
+            }
         }
     }
     plan.add.sort_by(|a, b| a.id.cmp(&b.id));
     plan.update.sort_by(|a, b| a.0.id.cmp(&b.0.id));
     plan.skip.sort_by(|a, b| a.0.id.cmp(&b.0.id));
     plan.remove.sort_by(|a, b| a.id.cmp(&b.id));
+    plan.keep.sort_by(|a, b| a.id.cmp(&b.id));
     plan
 }
 
@@ -88,7 +99,7 @@ mod tests {
     #[test]
     fn empty_lock_all_adds() {
         let lock = Lockfile::default();
-        let p = plan(&lock, &[audited("a", "1"), audited("b", "2")]);
+        let p = plan(&lock, &[audited("a", "1"), audited("b", "2")], false);
         assert_eq!(p.add.len(), 2);
         assert!(p.update.is_empty() && p.skip.is_empty() && p.remove.is_empty());
         assert!(p.has_changes());
@@ -111,6 +122,7 @@ mod tests {
                 audited("changed", "new-hash"),
                 audited("brand-new", "hash-n"),
             ],
+            false,
         );
         assert_eq!(
             p.add.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
@@ -133,8 +145,31 @@ mod tests {
             skills: vec![locked("a", "h")],
             ..Default::default()
         };
-        let p = plan(&lock, &[audited("a", "h")]);
+        let p = plan(&lock, &[audited("a", "h")], false);
         assert!(!p.has_changes());
         assert_eq!(p.skip.len(), 1);
+    }
+
+    #[test]
+    fn partial_run_keeps_out_of_scope_entries_instead_of_pruning() {
+        let lock = Lockfile {
+            skills: vec![locked("in-scope", "h"), locked("out-of-scope", "h2")],
+            ..Default::default()
+        };
+        let p = plan(&lock, &[audited("in-scope", "h")], true);
+        assert!(p.remove.is_empty());
+        assert_eq!(
+            p.keep.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(),
+            ["out-of-scope"]
+        );
+        assert!(!p.has_changes());
+
+        // The same diff on a full run prunes.
+        let p = plan(&lock, &[audited("in-scope", "h")], false);
+        assert_eq!(
+            p.remove.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(),
+            ["out-of-scope"]
+        );
+        assert!(p.keep.is_empty());
     }
 }

@@ -65,6 +65,13 @@ pub enum DiscoverError {
     },
 }
 
+/// TrustFilter stage failure (usage errors around positional filters).
+#[derive(Debug, Error)]
+pub enum TrustError {
+    #[error("no installed donor package matches: {patterns}")]
+    NoPackageMatch { patterns: String },
+}
+
 /// Materialize stage failure.
 #[derive(Debug, Error)]
 pub enum MaterializeError {
@@ -156,6 +163,8 @@ pub enum PipelineError {
     Prepare(#[from] PrepareError),
     #[error(transparent)]
     Discover(#[from] DiscoverError),
+    #[error(transparent)]
+    Trust(#[from] TrustError),
     #[error(transparent)]
     Materialize(#[from] MaterializeError),
     #[error(transparent)]

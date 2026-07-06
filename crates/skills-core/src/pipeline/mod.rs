@@ -23,10 +23,11 @@ use std::sync::Arc;
 use crate::error::PipelineError;
 use crate::traits::{Auditor, SkillLocator, VendorProvider};
 
-pub use ctx::{Ctx, PrepareOptions, prepare};
+pub use ctx::{Ctx, PrepareOptions, RunOptions, prepare};
 pub use plan::SyncPlan;
 pub use resolve::Resolution;
 pub use sync::{SyncAction, SyncEntry, SyncReport};
+pub use trust::{KeptDonor, SkipReason, SkippedDonor, TrustOutcome, TrustSource};
 
 /// Run the full pipeline after Prepare. Honors `ctx.dry_run` (full pipeline
 /// including conflict detection, zero writes).
@@ -37,12 +38,15 @@ pub async fn run_update(
     auditors: &[Arc<dyn Auditor>],
 ) -> Result<SyncReport, PipelineError> {
     let vendor_refs = discover::discover(ctx, providers).await?;
-    let vendor_refs = trust::trust_filter(ctx, vendor_refs);
-    let vendors = materialize::materialize_all(ctx, vendor_refs).await?;
+    let trust_outcome = trust::trust_filter(ctx, vendor_refs)?;
+    let trust_notes = trust_outcome.notes.clone();
+    let vendors = materialize::materialize_all(ctx, trust_outcome.into_kept_refs()).await?;
     let scanned = scan::locate_and_scan(&vendors, locators).await?;
     let resolution = resolve::resolve(scanned, &vendors)?;
     let audited = audit::audit_all(resolution.skills, auditors, ctx.manifest.audit_mode()).await?;
-    let sync_plan = plan::plan(&ctx.lockfile, &audited);
-    let report = sync::sync(ctx, sync_plan, resolution.notes)?;
+    let sync_plan = plan::plan(&ctx.lockfile, &audited, ctx.partial_sync());
+    let mut notes = resolution.notes;
+    notes.extend(trust_notes);
+    let report = sync::sync(ctx, sync_plan, notes)?;
     Ok(report)
 }

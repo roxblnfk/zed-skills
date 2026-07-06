@@ -1,0 +1,28 @@
+# Built-in trusted-vendors list for the composer provider (SPEC §8).
+#
+# A package whose Composer name matches any of these patterns may ship AI
+# skills into a consumer project without an explicit opt-in. Direct
+# dependencies of the consumer project (root `require` / `require-dev`) are
+# also implicitly trusted at runtime, independent of this list — this file
+# mostly matters for packages that arrive transitively.
+#
+# Pattern syntax:
+#   - `vendor/*`       — every package in the vendor namespace
+#   - `vendor/package` — exact package match
+#
+# Format: one pattern per line. Blank lines and lines starting with `#` are
+# ignored. Surrounding whitespace is trimmed. Entries are kept in
+# alphabetical order — please preserve that when adding a new line.
+
+cycle/*
+doctrine/*
+internal/*
+laravel/*
+llm/*
+moonshine/*
+spiral/*
+symfony/*
+tempest/*
+temporal/*
+testo/*
+yiisoft/*

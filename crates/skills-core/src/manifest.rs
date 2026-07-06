@@ -138,6 +138,21 @@ impl Manifest {
             .unwrap_or(&[])
     }
 
+    /// `local.composer` toggle (default: enabled, SPEC §4).
+    pub fn composer_enabled(&self) -> bool {
+        self.local.as_ref().and_then(|l| l.composer).unwrap_or(true)
+    }
+
+    /// Parsed project `trusted` patterns. Validation already rejected
+    /// malformed entries, so unparseable leftovers are ignored.
+    pub fn trusted_patterns(&self) -> Vec<crate::pattern::VendorPattern> {
+        self.trusted
+            .iter()
+            .flatten()
+            .filter_map(|p| crate::pattern::VendorPattern::parse(p).ok())
+            .collect()
+    }
+
     fn validate(&self) -> Result<(), ManifestError> {
         let invalid = |msg: String| ManifestError::Invalid(msg);
 
@@ -168,7 +183,7 @@ impl Manifest {
         // both sides non-empty)
         if let Some(trusted) = &self.trusted {
             for pattern in trusted {
-                if !is_valid_trusted_pattern(pattern) {
+                if crate::pattern::VendorPattern::parse(pattern).is_err() {
                     return Err(invalid(format!(
                         "invalid trusted pattern '{pattern}': expected 'vendor/package' or 'vendor/*'"
                     )));
@@ -218,15 +233,6 @@ impl Manifest {
         }
 
         Ok(())
-    }
-}
-
-fn is_valid_trusted_pattern(pattern: &str) -> bool {
-    // ^[^/]+/[^/]+$
-    let mut parts = pattern.split('/');
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(vendor), Some(pkg), None) => !vendor.is_empty() && !pkg.is_empty(),
-        _ => false,
     }
 }
 

@@ -9,19 +9,21 @@ pub mod fsutil;
 pub mod lockfile;
 pub mod manifest;
 pub mod paths;
+pub mod pattern;
 pub mod pipeline;
 pub mod traits;
 
 pub use audit::{AuditReport, AuditedSkill, AuditorId, Finding, Severity};
 pub use domain::{
-    MaterializedVendor, Note, NoteKind, Origin, ProviderId, ResolvedSkill, ScannedSkill, SkillId,
-    SkillsFilter, SkillsRoot, VendorName, VendorRef,
+    DonorStatus, MaterializedVendor, Note, NoteKind, Origin, ProviderId, ResolvedSkill,
+    ScannedSkill, SkillId, SkillsFilter, SkillsRoot, SourceHint, TrustBasis, VendorName, VendorRef,
 };
 pub use error::{
     DiscoverError, LockfileError, ManifestError, MaterializeError, PipelineError, PrepareError,
-    ResolveError, ScanError, SyncError,
+    ResolveError, ScanError, SyncError, TrustError,
 };
 pub use lockfile::{LockedSkill, Lockfile, SyncStatus};
 pub use manifest::{AuditMode, DEFAULT_TARGET, MANIFEST_NAME, Manifest};
+pub use pattern::VendorPattern;
 pub use pipeline::ctx::{Ctx, PrepareOptions};
 pub use traits::{Auditor, Cache, Located, SkillLocator, Vendor, VendorProvider};

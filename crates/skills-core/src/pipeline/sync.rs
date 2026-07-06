@@ -70,6 +70,10 @@ pub fn sync(ctx: &Ctx, plan: SyncPlan, notes: Vec<Note>) -> Result<SyncReport, S
     for (_, locked) in &plan.skip {
         lock.skills.push(locked.clone());
     }
+    // Out-of-scope entries of a partial run survive untouched.
+    for locked in &plan.keep {
+        lock.skills.push(locked.clone());
+    }
     lock.save(&ctx.project_root.join(LOCKFILE_NAME))?;
 
     Ok(report)
@@ -241,9 +245,8 @@ mod tests {
         prepare(
             &f.project,
             PrepareOptions {
-                target_override: None,
                 dry_run,
-                refresh: false,
+                ..Default::default()
             },
         )
         .unwrap()
@@ -450,12 +453,13 @@ mod tests {
             update: vec![(updated, old("updated", "stale", vec!["SKILL.md".into()]))],
             skip: vec![(skipped, skipped_lock)],
             remove: vec![old("removed", "x", vec!["SKILL.md".into()])],
+            keep: vec![old("kept", "k", vec!["SKILL.md".into()])],
         };
         sync(&ctx, plan, vec![]).unwrap();
         let lock = Lockfile::load(&f.project.join(LOCKFILE_NAME))
             .unwrap()
             .unwrap();
         let ids: Vec<&str> = lock.skills.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["added", "skipped", "updated"]);
+        assert_eq!(ids, ["added", "kept", "skipped", "updated"]);
     }
 }

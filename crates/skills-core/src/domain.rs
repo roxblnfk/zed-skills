@@ -136,6 +136,51 @@ impl SkillsFilter {
     }
 }
 
+/// How a donor entered the run — determines which trust rules apply to it
+/// (SPEC §8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustBasis {
+    /// Declared by the user in `skills.json` (`local.dir`, `remote[]`).
+    /// Implicitly trusted — the user typed it.
+    UserDeclared,
+    /// Direct dependency of the root project (`require` / `require-dev`).
+    /// Implicitly trusted unless `trusted-replace: true`.
+    DirectDependency,
+    /// Transitive local-provider discovery — must clear the effective trust
+    /// list.
+    Transitive,
+}
+
+/// Whether a donor declares where its skills live.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DonorStatus {
+    /// Declares its skills source (a manifest entry, or composer
+    /// `extra.skills.source`).
+    Declared,
+    /// No declaration — a discovery candidate. Included only when discovery
+    /// is enabled (globally or per-package via a positional argument).
+    Undeclared,
+    /// Declares a source that failed validation. Dropped from the run with
+    /// a warning; never blocks other donors.
+    Malformed { reason: String },
+}
+
+/// Locate-stage routing hint carried by a materialized vendor: tells the
+/// locator chain which strategies apply (SPEC §6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceHint {
+    /// `local.dir` donors: the vendor root itself is the skills root.
+    ExplicitRoot,
+    /// Composer donors with a validated `extra.skills.source` (normalized
+    /// `/`-separated path relative to the package root).
+    Declared(String),
+    /// Undeclared composer donors admitted via discovery: well-known
+    /// containers, then the bounded recursive fallback.
+    Discovery,
+    /// Remote/url donors: probe composer.json, then well-known containers.
+    Probe,
+}
+
 /// A discovered donor reference: output of the Discover stage, input of
 /// Materialize. Carries the vendor handle used to materialize it.
 #[derive(Clone)]
@@ -144,6 +189,8 @@ pub struct VendorRef {
     pub name: VendorName,
     pub origin: Origin,
     pub filter: SkillsFilter,
+    pub trust: TrustBasis,
+    pub status: DonorStatus,
     pub vendor: Arc<dyn Vendor>,
 }
 
@@ -154,6 +201,8 @@ impl fmt::Debug for VendorRef {
             .field("name", &self.name)
             .field("origin", &self.origin)
             .field("filter", &self.filter)
+            .field("trust", &self.trust)
+            .field("status", &self.status)
             .finish_non_exhaustive()
     }
 }
@@ -168,6 +217,8 @@ pub struct MaterializedVendor {
     pub root: PathBuf,
     pub ref_resolved: Option<String>,
     pub filter: SkillsFilter,
+    /// Which locator strategies apply to this vendor.
+    pub source_hint: SourceHint,
 }
 
 /// A directory whose immediate subdirectories are candidate skills.
@@ -236,6 +287,7 @@ pub struct Note {
 pub enum NoteKind {
     Skip,
     Hint,
+    Warn,
 }
 
 impl Note {
@@ -249,6 +301,13 @@ impl Note {
     pub fn hint(message: impl Into<String>) -> Self {
         Note {
             kind: NoteKind::Hint,
+            message: message.into(),
+        }
+    }
+
+    pub fn warn(message: impl Into<String>) -> Self {
+        Note {
+            kind: NoteKind::Warn,
             message: message.into(),
         }
     }
