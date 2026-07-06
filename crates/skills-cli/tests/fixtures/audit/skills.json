@@ -1,0 +1,4 @@
+{
+  "local": { "dir": ["./clean-src", "./danger-src"] },
+  "audit": { "mode": "warn" }
+}

@@ -1,0 +1,14 @@
+---
+source: crates/skills-cli/tests/e2e_audit.rs
+expression: out
+---
+Syncing skills into .agents/skills
+
+dir/clean-src:
+  [add]  tidy (copied 1 file)
+
+dir/danger-src:
+  [add]  payload (copied 2 files)
+         [audit] warn static: curl-pipe-shell: curl output piped into a shell (scripts/install.sh:2)
+
+2 added, 0 updated, 0 removed, 0 up to date.
