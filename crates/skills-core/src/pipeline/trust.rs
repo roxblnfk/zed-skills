@@ -125,7 +125,7 @@ pub fn trust_filter(ctx: &Ctx, vendors: Vec<VendorRef>) -> Result<TrustOutcome, 
         if let DonorStatus::Malformed { reason } = &donor.status {
             outcome
                 .notes
-                .push(Note::warn(format!("{name}: {reason} — donor skipped")));
+                .push(Note::warn(format!("{name}: {reason} (donor skipped)")));
             outcome.skipped.push(SkippedDonor {
                 reason: SkipReason::Malformed(reason.clone()),
                 name,
