@@ -31,6 +31,7 @@ crates/skills-providers/  # Dir, Composer, GitHub, GitLab providers; HTTP client
 crates/skills-audit/      # StaticAuditor, (later) LLM/HTTP auditors
 crates/skills-lsp/        # `skills lsp`: diagnostics server for skills.json/SKILL.md (stdio, notify watcher)
 crates/skills-cli/        # clap binary `skills`: init/update/show/add/lsp, --dry-run etc.
+extension/                # Zed extension (wasm32-wasip2, zed_extension_api) — NOT a workspace member (root Cargo.toml excludes it); languages skills-json/skill-md + `skills lsp` server wiring
 ```
 
 ## Conventions
