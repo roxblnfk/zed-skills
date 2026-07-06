@@ -29,7 +29,8 @@ Key contracts (traits in `skills-core`): `VendorProvider` (discover donors), `Ve
 crates/skills-core/       # domain, manifest, lockfile, pipeline stages, traits. No network/CLI.
 crates/skills-providers/  # Dir, Composer, GitHub, GitLab providers; HTTP client abstraction
 crates/skills-audit/      # StaticAuditor, (later) LLM/HTTP auditors
-crates/skills-cli/        # clap binary `skills`: init/update/show/add, --dry-run etc.
+crates/skills-lsp/        # `skills lsp`: diagnostics server for skills.json/SKILL.md (stdio, notify watcher)
+crates/skills-cli/        # clap binary `skills`: init/update/show/add/lsp, --dry-run etc.
 ```
 
 ## Conventions
