@@ -1,0 +1,11 @@
+---
+source: crates/skills-cli/tests/e2e_lockpath.rs
+expression: out
+---
+Syncing skills into .agents/skills
+
+dir/skills-src:
+  [add]  code-review (copied 1 file)
+  [add]  docs-helper (copied 1 file)
+
+2 added, 0 updated, 0 removed, 0 up to date.
