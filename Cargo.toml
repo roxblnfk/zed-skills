@@ -28,6 +28,7 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync"] }
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
+regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 tempfile = "3"
