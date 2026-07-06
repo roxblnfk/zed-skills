@@ -85,6 +85,9 @@ enum Command {
         #[arg(long)]
         discovery: bool,
     },
+    /// Run the language server over stdio (diagnostics for skills.json and
+    /// SKILL.md; editors launch this, not humans).
+    Lsp,
     /// Register a remote donor in skills.json and sync it immediately.
     Add {
         /// `github:owner/repo`, `gitlab:group/project` or a repository URL
@@ -216,6 +219,7 @@ async fn main() -> ExitCode {
             )
             .await
         }
+        Command::Lsp => commands::lsp::run().await,
         Command::Add {
             input,
             r#ref,

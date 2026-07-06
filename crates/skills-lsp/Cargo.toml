@@ -1,5 +1,5 @@
 [package]
-name = "skills"
+name = "skills-lsp"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,14 +10,16 @@ repository.workspace = true
 skills-core.workspace = true
 skills-providers.workspace = true
 skills-audit.workspace = true
-skills-lsp.workspace = true
-clap.workspace = true
-tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
 serde_json.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["time", "io-std", "io-util"] }
+tower-lsp-server.workspace = true
+jsonc-parser.workspace = true
+notify.workspace = true
+notify-debouncer-mini.workspace = true
 
 [dev-dependencies]
-assert_cmd.workspace = true
-insta.workspace = true
 tempfile.workspace = true
-walkdir.workspace = true
-wiremock.workspace = true
+insta.workspace = true

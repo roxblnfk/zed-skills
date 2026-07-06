@@ -1,5 +1,6 @@
 pub mod add;
 pub mod init;
+pub mod lsp;
 pub mod show;
 pub mod update;
 

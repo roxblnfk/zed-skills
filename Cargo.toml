@@ -4,6 +4,7 @@ members = [
     "crates/skills-core",
     "crates/skills-providers",
     "crates/skills-audit",
+    "crates/skills-lsp",
     "crates/skills-cli",
 ]
 
@@ -18,6 +19,7 @@ repository = "https://github.com/zed-skills/ai-skills"
 skills-core = { path = "crates/skills-core" }
 skills-providers = { path = "crates/skills-providers" }
 skills-audit = { path = "crates/skills-audit" }
+skills-lsp = { path = "crates/skills-lsp" }
 
 anyhow = "1"
 thiserror = "2"
@@ -32,6 +34,10 @@ regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 tempfile = "3"
+tower-lsp-server = "0.23"
+jsonc-parser = "0.32"
+notify = "8"
+notify-debouncer-mini = "0.7"
 insta = { version = "1", features = ["json"] }
 wiremock = "0.6"
 walkdir = "2"
