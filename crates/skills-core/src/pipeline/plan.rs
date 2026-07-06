@@ -1,18 +1,17 @@
 //! Stage 8 — Plan: diff the audited skills against the lockfile.
 
 use crate::audit::AuditedSkill;
-use crate::domain::ResolvedSkill;
 use crate::lockfile::{LockedSkill, Lockfile};
 
 #[derive(Debug, Clone, Default)]
 pub struct SyncPlan {
     /// Skills not present in the lockfile.
-    pub add: Vec<ResolvedSkill>,
+    pub add: Vec<AuditedSkill>,
     /// Skills whose content hash differs from the lock (with the old entry —
     /// its file list drives removal of files the donor stopped shipping).
-    pub update: Vec<(ResolvedSkill, LockedSkill)>,
+    pub update: Vec<(AuditedSkill, LockedSkill)>,
     /// Skills identical to the lock.
-    pub skip: Vec<(ResolvedSkill, LockedSkill)>,
+    pub skip: Vec<(AuditedSkill, LockedSkill)>,
     /// Lock entries whose donor (or skill) disappeared — to be pruned.
     pub remove: Vec<LockedSkill>,
     /// Lock entries out of scope of a partial run (positional filters,
@@ -32,13 +31,12 @@ impl SyncPlan {
 pub fn plan(lockfile: &Lockfile, audited: &[AuditedSkill], partial: bool) -> SyncPlan {
     let mut plan = SyncPlan::default();
     for entry in audited {
-        let skill = &entry.skill;
-        match lockfile.find(&skill.id) {
-            None => plan.add.push(skill.clone()),
-            Some(locked) if locked.content_hash == skill.content_hash => {
-                plan.skip.push((skill.clone(), locked.clone()));
+        match lockfile.find(&entry.skill.id) {
+            None => plan.add.push(entry.clone()),
+            Some(locked) if locked.content_hash == entry.skill.content_hash => {
+                plan.skip.push((entry.clone(), locked.clone()));
             }
-            Some(locked) => plan.update.push((skill.clone(), locked.clone())),
+            Some(locked) => plan.update.push((entry.clone(), locked.clone())),
         }
     }
     for locked in &lockfile.skills {
@@ -51,9 +49,9 @@ pub fn plan(lockfile: &Lockfile, audited: &[AuditedSkill], partial: bool) -> Syn
             }
         }
     }
-    plan.add.sort_by(|a, b| a.id.cmp(&b.id));
-    plan.update.sort_by(|a, b| a.0.id.cmp(&b.0.id));
-    plan.skip.sort_by(|a, b| a.0.id.cmp(&b.0.id));
+    plan.add.sort_by(|a, b| a.skill.id.cmp(&b.skill.id));
+    plan.update.sort_by(|a, b| a.0.skill.id.cmp(&b.0.skill.id));
+    plan.skip.sort_by(|a, b| a.0.skill.id.cmp(&b.0.skill.id));
     plan.remove.sort_by(|a, b| a.id.cmp(&b.id));
     plan.keep.sort_by(|a, b| a.id.cmp(&b.id));
     plan
@@ -62,26 +60,21 @@ pub fn plan(lockfile: &Lockfile, audited: &[AuditedSkill], partial: bool) -> Syn
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audit::Severity;
-    use crate::domain::{Origin, SkillId, VendorName};
+    use crate::domain::{Origin, ResolvedSkill, SkillId, VendorName};
     use std::path::PathBuf;
 
     fn audited(id: &str, hash: &str) -> AuditedSkill {
-        AuditedSkill {
-            skill: ResolvedSkill {
-                id: SkillId::new(id),
-                canonical_name: id.to_string(),
-                description: None,
-                vendor: VendorName::new("a/x"),
-                origin: Origin::Local { path: "./a".into() },
-                ref_resolved: None,
-                path: PathBuf::from(id),
-                files: vec!["SKILL.md".into()],
-                content_hash: hash.to_string(),
-            },
-            verdict: Severity::Pass,
-            findings: vec![],
-        }
+        AuditedSkill::unaudited(ResolvedSkill {
+            id: SkillId::new(id),
+            canonical_name: id.to_string(),
+            description: None,
+            vendor: VendorName::new("a/x"),
+            origin: Origin::Local { path: "./a".into() },
+            ref_resolved: None,
+            path: PathBuf::from(id),
+            files: vec!["SKILL.md".into()],
+            content_hash: hash.to_string(),
+        })
     }
 
     fn locked(id: &str, hash: &str) -> LockedSkill {
@@ -125,14 +118,17 @@ mod tests {
             false,
         );
         assert_eq!(
-            p.add.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            p.add
+                .iter()
+                .map(|a| a.skill.id.as_str())
+                .collect::<Vec<_>>(),
             ["brand-new"]
         );
         assert_eq!(p.update.len(), 1);
-        assert_eq!(p.update[0].0.id.as_str(), "changed");
+        assert_eq!(p.update[0].0.skill.id.as_str(), "changed");
         assert_eq!(p.update[0].1.content_hash, "old-hash");
         assert_eq!(p.skip.len(), 1);
-        assert_eq!(p.skip[0].0.id.as_str(), "same");
+        assert_eq!(p.skip[0].0.skill.id.as_str(), "same");
         assert_eq!(
             p.remove.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(),
             ["gone"]

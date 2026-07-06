@@ -21,8 +21,9 @@ pub mod trust;
 use std::sync::Arc;
 
 use crate::error::PipelineError;
-use crate::traits::{Auditor, SkillLocator, VendorProvider};
+use crate::traits::{SkillLocator, VendorProvider};
 
+pub use audit::ChainEntry;
 pub use ctx::{Ctx, PrepareOptions, RunOptions, prepare};
 pub use plan::SyncPlan;
 pub use resolve::Resolution;
@@ -35,7 +36,7 @@ pub async fn run_update(
     ctx: &Ctx,
     providers: &[Arc<dyn VendorProvider>],
     locators: &[Arc<dyn SkillLocator>],
-    auditors: &[Arc<dyn Auditor>],
+    chain: &[ChainEntry],
 ) -> Result<SyncReport, PipelineError> {
     let vendor_refs = discover::discover(ctx, providers).await?;
     let trust_outcome = trust::trust_filter(ctx, vendor_refs)?;
@@ -43,7 +44,7 @@ pub async fn run_update(
     let vendors = materialize::materialize_all(ctx, trust_outcome.into_kept_refs()).await?;
     let scanned = scan::locate_and_scan(&vendors, locators).await?;
     let resolution = resolve::resolve(scanned, &vendors)?;
-    let audited = audit::audit_all(resolution.skills, auditors, ctx.manifest.audit_mode()).await?;
+    let audited = audit::audit_all(ctx, resolution.skills, chain).await?;
     let sync_plan = plan::plan(&ctx.lockfile, &audited, ctx.partial_sync());
     let mut notes = resolution.notes;
     notes.extend(trust_notes);

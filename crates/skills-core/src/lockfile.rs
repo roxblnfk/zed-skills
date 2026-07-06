@@ -43,8 +43,8 @@ pub struct LockedSkill {
     pub audit: Option<AuditCacheEntry>,
 }
 
-/// Cached audit verdict, keyed by content hash + auditor set (M4).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Cached audit verdict, keyed by content hash + auditor set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuditCacheEntry {
     pub verdict: String,

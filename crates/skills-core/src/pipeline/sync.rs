@@ -11,10 +11,12 @@ use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::audit::{AuditFinding, AuditedSkill, Severity};
 use crate::domain::{Note, ResolvedSkill};
 use crate::error::SyncError;
 use crate::fsutil;
 use crate::lockfile::{LOCKFILE_NAME, LockedSkill, Lockfile};
+use crate::manifest::AuditMode;
 use crate::paths::rel_to_path;
 use crate::pipeline::ctx::Ctx;
 use crate::pipeline::plan::SyncPlan;
@@ -33,12 +35,19 @@ pub struct SyncEntry {
     pub id: String,
     pub action: SyncAction,
     pub file_count: usize,
+    /// Audit verdict of the skill; `None` for removals (nothing was audited).
+    pub verdict: Option<Severity>,
+    /// Effective findings from this run's audit chain (empty on cache hits).
+    pub findings: Vec<AuditFinding>,
+    /// The verdict was reused from the lockfile cache.
+    pub audit_cached: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct SyncReport {
     pub target_rel: String,
     pub dry_run: bool,
+    pub audit_mode: AuditMode,
     /// Sorted by (vendor, id) so output groups cleanly per donor.
     pub entries: Vec<SyncEntry>,
     pub notes: Vec<Note>,
@@ -59,16 +68,25 @@ pub fn sync(ctx: &Ctx, plan: SyncPlan, notes: Vec<Note>) -> Result<SyncReport, S
     apply(ctx, &plan)?;
 
     // New lockfile, written last: add/update from the fresh scan, skip keeps
-    // its previous entry (preserves the audit cache).
+    // its previous entry. Audit cache: `cache_entry` is stored for synced AND
+    // skipped skills; `None` (mode off) leaves previous verdicts untouched.
     let mut lock = Lockfile::default();
-    for skill in &plan.add {
-        lock.skills.push(LockedSkill::from(skill));
+    for audited in &plan.add {
+        let mut locked = LockedSkill::from(&audited.skill);
+        locked.audit = audited.cache_entry.clone();
+        lock.skills.push(locked);
     }
-    for (skill, _) in &plan.update {
-        lock.skills.push(LockedSkill::from(skill));
+    for (audited, old) in &plan.update {
+        let mut locked = LockedSkill::from(&audited.skill);
+        locked.audit = audited.cache_entry.clone().or_else(|| old.audit.clone());
+        lock.skills.push(locked);
     }
-    for (_, locked) in &plan.skip {
-        lock.skills.push(locked.clone());
+    for (audited, old) in &plan.skip {
+        let mut locked = old.clone();
+        if let Some(entry) = &audited.cache_entry {
+            locked.audit = Some(entry.clone());
+        }
+        lock.skills.push(locked);
     }
     // Out-of-scope entries of a partial run survive untouched.
     for locked in &plan.keep {
@@ -81,29 +99,36 @@ pub fn sync(ctx: &Ctx, plan: SyncPlan, notes: Vec<Note>) -> Result<SyncReport, S
 
 fn build_report(ctx: &Ctx, plan: &SyncPlan, notes: Vec<Note>) -> SyncReport {
     let mut entries: Vec<SyncEntry> = Vec::new();
-    let entry = |skill: &ResolvedSkill, action: SyncAction| SyncEntry {
-        vendor: skill.vendor.as_str().to_string(),
-        id: skill.id.as_str().to_string(),
+    let entry = |audited: &AuditedSkill, action: SyncAction| SyncEntry {
+        vendor: audited.skill.vendor.as_str().to_string(),
+        id: audited.skill.id.as_str().to_string(),
         action,
-        file_count: skill.files.len(),
+        file_count: audited.skill.files.len(),
+        verdict: Some(audited.verdict),
+        findings: audited.findings.clone(),
+        audit_cached: audited.cached,
     };
-    entries.extend(plan.add.iter().map(|s| entry(s, SyncAction::Add)));
+    entries.extend(plan.add.iter().map(|a| entry(a, SyncAction::Add)));
     entries.extend(
         plan.update
             .iter()
-            .map(|(s, _)| entry(s, SyncAction::Update)),
+            .map(|(a, _)| entry(a, SyncAction::Update)),
     );
-    entries.extend(plan.skip.iter().map(|(s, _)| entry(s, SyncAction::Skip)));
+    entries.extend(plan.skip.iter().map(|(a, _)| entry(a, SyncAction::Skip)));
     entries.extend(plan.remove.iter().map(|locked| SyncEntry {
         vendor: locked.vendor.clone(),
         id: locked.id.clone(),
         action: SyncAction::Remove,
         file_count: locked.files.len(),
+        verdict: None,
+        findings: Vec::new(),
+        audit_cached: false,
     }));
     entries.sort_by(|a, b| (&a.vendor, &a.id).cmp(&(&b.vendor, &b.id)));
     SyncReport {
         target_rel: ctx.target_rel.clone(),
         dry_run: ctx.dry_run,
+        audit_mode: ctx.manifest.audit_mode(),
         entries,
         notes,
     }
@@ -119,8 +144,8 @@ fn apply(ctx: &Ctx, plan: &SyncPlan) -> Result<(), SyncError> {
     let staged: Vec<(&ResolvedSkill, Option<&LockedSkill>)> = plan
         .add
         .iter()
-        .map(|s| (s, None))
-        .chain(plan.update.iter().map(|(s, old)| (s, Some(old))))
+        .map(|a| (&a.skill, None))
+        .chain(plan.update.iter().map(|(a, old)| (&a.skill, Some(old))))
         .collect();
 
     // Stage everything before touching the target.
@@ -276,13 +301,17 @@ mod tests {
         }
     }
 
+    fn pass(skill: ResolvedSkill) -> AuditedSkill {
+        AuditedSkill::unaudited(skill)
+    }
+
     #[test]
     fn adds_new_skill_and_writes_lockfile() {
         let f = fixture();
         let skill = donor_skill(&f, "alpha", &[("SKILL.md", "hello"), ("refs/a.md", "ref")]);
         let ctx = ctx(&f, false);
         let plan = SyncPlan {
-            add: vec![skill],
+            add: vec![pass(skill)],
             ..Default::default()
         };
         let report = sync(&ctx, plan, vec![]).unwrap();
@@ -329,7 +358,7 @@ mod tests {
             audit: None,
         };
         let plan = SyncPlan {
-            update: vec![(skill, old_lock)],
+            update: vec![(pass(skill), old_lock)],
             ..Default::default()
         };
         sync(&ctx, plan, vec![]).unwrap();
@@ -416,7 +445,7 @@ mod tests {
         let skill = donor_skill(&f, "alpha", &[("SKILL.md", "hello")]);
         let ctx = ctx(&f, true);
         let plan = SyncPlan {
-            add: vec![skill],
+            add: vec![pass(skill)],
             ..Default::default()
         };
         let report = sync(&ctx, plan, vec![]).unwrap();
@@ -449,9 +478,12 @@ mod tests {
         };
         let skipped_lock = old("skipped", &skipped.content_hash, skipped.files.clone());
         let plan = SyncPlan {
-            add: vec![added],
-            update: vec![(updated, old("updated", "stale", vec!["SKILL.md".into()]))],
-            skip: vec![(skipped, skipped_lock)],
+            add: vec![pass(added)],
+            update: vec![(
+                pass(updated),
+                old("updated", "stale", vec!["SKILL.md".into()]),
+            )],
+            skip: vec![(pass(skipped), skipped_lock)],
             remove: vec![old("removed", "x", vec!["SKILL.md".into()])],
             keep: vec![old("kept", "k", vec!["SKILL.md".into()])],
         };
@@ -461,5 +493,65 @@ mod tests {
             .unwrap();
         let ids: Vec<&str> = lock.skills.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["added", "kept", "skipped", "updated"]);
+    }
+
+    #[test]
+    fn lockfile_stores_and_preserves_audit_cache_entries() {
+        use crate::lockfile::AuditCacheEntry;
+
+        let f = fixture();
+        let added = donor_skill(&f, "added", &[("SKILL.md", "a")]);
+        let skipped = donor_skill(&f, "skipped", &[("SKILL.md", "s")]);
+        let off_skipped = donor_skill(&f, "untouched", &[("SKILL.md", "u")]);
+        let ctx = ctx(&f, false);
+
+        let entry = |verdict: &str| AuditCacheEntry {
+            verdict: verdict.into(),
+            auditor_set_hash: "set-hash".into(),
+        };
+        let with_audit = |skill: ResolvedSkill, verdict: &str| {
+            let mut a = AuditedSkill::unaudited(skill);
+            a.cache_entry = Some(entry(verdict));
+            a
+        };
+        let old = |skill: &ResolvedSkill, audit: Option<AuditCacheEntry>| LockedSkill {
+            id: skill.id.as_str().into(),
+            vendor: "dir/donor".into(),
+            origin: Origin::Local {
+                path: "./donor".into(),
+            },
+            ref_resolved: None,
+            content_hash: skill.content_hash.clone(),
+            files: skill.files.clone(),
+            audit,
+        };
+
+        let skipped_lock = old(&skipped, Some(entry("pass")));
+        let untouched_lock = old(&off_skipped, Some(entry("warn")));
+        let plan = SyncPlan {
+            // Synced skill: fresh verdict stored.
+            add: vec![with_audit(added, "warn")],
+            // Skipped skill, re-audited (e.g. pipeline changed): overwritten.
+            skip: vec![
+                (with_audit(skipped, "block"), skipped_lock),
+                // Mode off (`cache_entry: None`): previous verdict untouched.
+                (pass(off_skipped), untouched_lock),
+            ],
+            ..Default::default()
+        };
+        sync(&ctx, plan, vec![]).unwrap();
+
+        let lock = Lockfile::load(&f.project.join(LOCKFILE_NAME))
+            .unwrap()
+            .unwrap();
+        let audit_of = |id: &str| {
+            lock.skills
+                .iter()
+                .find(|s| s.id == id)
+                .and_then(|s| s.audit.clone())
+        };
+        assert_eq!(audit_of("added").unwrap().verdict, "warn");
+        assert_eq!(audit_of("skipped").unwrap().verdict, "block");
+        assert_eq!(audit_of("untouched").unwrap().verdict, "warn");
     }
 }

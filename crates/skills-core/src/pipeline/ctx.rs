@@ -29,6 +29,9 @@ pub struct RunOptions {
     /// A `--from=ID` provider scope is active: donors outside the scope keep
     /// their lockfile entries instead of being pruned.
     pub scoped: bool,
+    /// `--re-audit`: bypass the lockfile verdict cache and re-run the audit
+    /// chain (`--refresh` intentionally does not).
+    pub re_audit: bool,
 }
 
 /// Immutable context threaded through all pipeline stages.

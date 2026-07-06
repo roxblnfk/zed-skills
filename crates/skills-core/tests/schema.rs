@@ -54,7 +54,11 @@ fn schema_top_level_properties_match_serde_model() {
         "discovery": true,
         "local": { "composer": false, "dir": ["./d"], "npm": true, "go": true },
         "remote": [ { "from": "github", "package": "a/b", "ref": "v1", "host": "h", "skills": [] } ],
-        "audit": { "mode": "warn", "pipeline": [ { "use": "static", "on-fail": "warn" } ] },
+        "audit": { "mode": "warn", "pipeline": [
+            { "use": "static", "on-fail": "warn" },
+            { "use": "llm", "model": "m", "on-fail": "warn" },
+            { "use": "http", "url": "https://a", "on-fail": "block" }
+        ] },
         "path-from-root": "pkg/app"
     }"#;
     Manifest::parse(doc).unwrap();
@@ -71,5 +75,33 @@ fn schema_remote_enum_matches_model() {
             .map(|v| v.as_str().unwrap())
             .collect::<Vec<_>>(),
         ["github", "gitlab", "http", "zip"]
+    );
+}
+
+#[test]
+fn schema_audit_pipeline_matches_model() {
+    let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
+    let items = &schema["properties"]["audit"]["properties"]["pipeline"]["items"];
+
+    // The `use` enum mirrors `manifest::AUDITOR_IDS`.
+    let ids: Vec<&str> = items["properties"]["use"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(ids, skills_core::manifest::AUDITOR_IDS);
+
+    // Unknown per-entry fields must be rejected by the schema too
+    // (mirrors the per-variant deny_unknown_fields).
+    assert_eq!(items["additionalProperties"], false);
+    let mode = &schema["properties"]["audit"]["properties"]["mode"]["enum"];
+    assert_eq!(
+        mode.as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["off", "warn", "block"]
     );
 }

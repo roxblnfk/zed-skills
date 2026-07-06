@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::ManifestError;
 use crate::paths::normalize_rel;
@@ -68,6 +68,8 @@ const BY_URL_SOURCES: &[&str] = &["http", "zip"];
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct AuditConfig {
     pub mode: Option<AuditMode>,
+    /// Ordered auditor chain. Absent = the default chain (a single
+    /// `static` entry); an explicit `[]` = no auditors.
     pub pipeline: Option<Vec<AuditStep>>,
 }
 
@@ -80,15 +82,115 @@ pub enum AuditMode {
     Block,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+/// One `audit.pipeline` entry, tagged by `use`. Unknown auditor ids and
+/// unknown per-entry fields are config errors (exit 1).
+#[derive(Debug, Clone, PartialEq)]
+pub enum AuditStep {
+    Static(StaticStep),
+    Llm(LlmStep),
+    Http(HttpStep),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct AuditStep {
-    #[serde(rename = "use")]
-    pub use_: String,
+pub struct StaticStep {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_fail: Option<OnFail>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+/// Config of the (not yet implemented) LLM auditor. Accepted by the schema
+/// for forward compatibility; constructing the auditor is a config error.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct LlmStep {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_fail: Option<OnFail>,
+}
+
+/// Config of the (not yet implemented) HTTP auditor. Accepted by the schema
+/// for forward compatibility; constructing the auditor is a config error.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct HttpStep {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_fail: Option<OnFail>,
+}
+
+pub const AUDITOR_IDS: &[&str] = &["static", "llm", "http"];
+
+impl AuditStep {
+    pub fn id(&self) -> &'static str {
+        match self {
+            AuditStep::Static(_) => "static",
+            AuditStep::Llm(_) => "llm",
+            AuditStep::Http(_) => "http",
+        }
+    }
+
+    pub fn on_fail(&self) -> Option<OnFail> {
+        match self {
+            AuditStep::Static(c) => c.on_fail,
+            AuditStep::Llm(c) => c.on_fail,
+            AuditStep::Http(c) => c.on_fail,
+        }
+    }
+
+    /// Canonical JSON value (options + `use`, keys sorted by serde_json's
+    /// BTreeMap) — the input of the auditor-set hash.
+    pub fn canonical(&self) -> serde_json::Value {
+        let value = match self {
+            AuditStep::Static(c) => serde_json::to_value(c),
+            AuditStep::Llm(c) => serde_json::to_value(c),
+            AuditStep::Http(c) => serde_json::to_value(c),
+        };
+        // Step configs are plain optional fields; serialization cannot fail.
+        let mut obj = match value.expect("audit step serializes") {
+            serde_json::Value::Object(obj) => obj,
+            _ => serde_json::Map::new(),
+        };
+        obj.insert("use".to_string(), serde_json::Value::from(self.id()));
+        serde_json::Value::Object(obj)
+    }
+}
+
+// Manual impl: serde's internally-tagged representation does not support
+// `deny_unknown_fields`, and we want a precise "unknown auditor" message.
+impl<'de> Deserialize<'de> for AuditStep {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let mut map = serde_json::Map::deserialize(deserializer)?;
+        let tag = map
+            .remove("use")
+            .ok_or_else(|| D::Error::custom("audit.pipeline entry: missing field `use`"))?;
+        let Some(id) = tag.as_str().map(str::to_string) else {
+            return Err(D::Error::custom(
+                "audit.pipeline entry: `use` must be a string",
+            ));
+        };
+        let rest = serde_json::Value::Object(map);
+        let step = match id.as_str() {
+            "static" => serde_json::from_value(rest).map(AuditStep::Static),
+            "llm" => serde_json::from_value(rest).map(AuditStep::Llm),
+            "http" => serde_json::from_value(rest).map(AuditStep::Http),
+            other => {
+                return Err(D::Error::custom(format!(
+                    "audit.pipeline entry: unknown auditor '{other}' (expected one of: {})",
+                    AUDITOR_IDS.join(", ")
+                )));
+            }
+        };
+        step.map_err(|e| D::Error::custom(format!("audit.pipeline entry ({id}): {e}")))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OnFail {
     Warn,
@@ -128,6 +230,16 @@ impl Manifest {
     /// Effective audit mode (default: off).
     pub fn audit_mode(&self) -> AuditMode {
         self.audit.as_ref().and_then(|a| a.mode).unwrap_or_default()
+    }
+
+    /// Effective audit pipeline: configured steps; an absent `pipeline`
+    /// defaults to a single `static` entry, an explicit `[]` disables all
+    /// auditors.
+    pub fn audit_steps(&self) -> Vec<AuditStep> {
+        match self.audit.as_ref().and_then(|a| a.pipeline.clone()) {
+            Some(steps) => steps,
+            None => vec![AuditStep::Static(StaticStep::default())],
+        }
     }
 
     /// Declared `local.dir` entries (empty if absent).
@@ -515,6 +627,78 @@ mod tests {
         let m = Manifest::parse(r#"{ "audit": { "mode": "block" } }"#).unwrap();
         assert_eq!(m.audit_mode(), AuditMode::Block);
         assert!(err(r#"{ "audit": { "mode": "loud" } }"#).starts_with("skills.json:"));
+    }
+
+    #[test]
+    fn audit_pipeline_variants_parse() {
+        let m = Manifest::parse(
+            r#"{ "audit": { "mode": "warn", "pipeline": [
+                { "use": "static", "on-fail": "warn" },
+                { "use": "llm", "model": "gpt-x" },
+                { "use": "http", "url": "https://audit.example", "on-fail": "block" }
+            ] } }"#,
+        )
+        .unwrap();
+        let steps = m.audit_steps();
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].id(), "static");
+        assert_eq!(steps[0].on_fail(), Some(OnFail::Warn));
+        assert_eq!(steps[1].id(), "llm");
+        assert_eq!(steps[1].on_fail(), None);
+        let AuditStep::Llm(llm) = &steps[1] else {
+            panic!("expected llm step");
+        };
+        assert_eq!(llm.model.as_deref(), Some("gpt-x"));
+        assert_eq!(steps[2].id(), "http");
+        assert_eq!(steps[2].on_fail(), Some(OnFail::Block));
+    }
+
+    #[test]
+    fn audit_pipeline_defaults_to_static() {
+        // Absent pipeline (or absent audit section) = the default chain.
+        let steps = Manifest::parse("{}").unwrap().audit_steps();
+        assert_eq!(steps, vec![AuditStep::Static(StaticStep::default())]);
+        let steps = Manifest::parse(r#"{ "audit": { "mode": "warn" } }"#)
+            .unwrap()
+            .audit_steps();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].id(), "static");
+
+        // Explicit [] = no auditors.
+        let steps = Manifest::parse(r#"{ "audit": { "pipeline": [] } }"#)
+            .unwrap()
+            .audit_steps();
+        assert!(steps.is_empty());
+    }
+
+    #[test]
+    fn audit_pipeline_unknown_auditor_rejected() {
+        let e = err(r#"{ "audit": { "pipeline": [ { "use": "voodoo" } ] } }"#);
+        assert!(e.contains("unknown auditor 'voodoo'"), "{e}");
+        assert!(e.contains("static, llm, http"), "{e}");
+    }
+
+    #[test]
+    fn audit_pipeline_entry_requires_use() {
+        let e = err(r#"{ "audit": { "pipeline": [ { "on-fail": "warn" } ] } }"#);
+        assert!(e.contains("missing field `use`"), "{e}");
+        let e = err(r#"{ "audit": { "pipeline": [ { "use": 5 } ] } }"#);
+        assert!(e.contains("`use` must be a string"), "{e}");
+    }
+
+    #[test]
+    fn audit_pipeline_unknown_entry_field_rejected() {
+        let e = err(r#"{ "audit": { "pipeline": [ { "use": "static", "level": 9 } ] } }"#);
+        assert!(e.contains("unknown field"), "{e}");
+        // Options are per-variant: `model` belongs to llm, not http.
+        let e = err(r#"{ "audit": { "pipeline": [ { "use": "http", "model": "x" } ] } }"#);
+        assert!(e.contains("unknown field"), "{e}");
+    }
+
+    #[test]
+    fn audit_pipeline_bad_on_fail_rejected() {
+        let e = err(r#"{ "audit": { "pipeline": [ { "use": "static", "on-fail": "off" } ] } }"#);
+        assert!(e.starts_with("skills.json:"), "{e}");
     }
 
     #[test]

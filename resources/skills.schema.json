@@ -150,24 +150,81 @@
             "additionalProperties": false,
             "properties": {
                 "mode": {
+                    "description": "off = audit stage skipped; warn = blocking findings render as warnings; block = any blocking finding aborts the sync (exit 3).",
                     "enum": ["off", "warn", "block"],
                     "default": "off"
                 },
                 "pipeline": {
+                    "description": "Ordered auditor chain. Absent = a single 'static' entry; [] = no auditors. 'llm' and 'http' are reserved for a future release.",
                     "type": "array",
                     "items": {
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
                             "use": {
+                                "enum": ["static", "llm", "http"]
+                            },
+                            "on-fail": {
+                                "description": "Caps this auditor's effective severity: warn downgrades blocks, block upgrades warnings.",
+                                "enum": ["warn", "block"]
+                            },
+                            "model": {
+                                "description": "llm only.",
                                 "type": "string",
                                 "minLength": 1
                             },
-                            "on-fail": {
-                                "enum": ["warn", "block"]
+                            "url": {
+                                "description": "http only.",
+                                "type": "string",
+                                "minLength": 1
                             }
                         },
-                        "required": ["use"]
+                        "required": ["use"],
+                        "allOf": [
+                            {
+                                "if": {
+                                    "properties": {
+                                        "use": {
+                                            "const": "static"
+                                        }
+                                    }
+                                },
+                                "then": {
+                                    "properties": {
+                                        "model": false,
+                                        "url": false
+                                    }
+                                }
+                            },
+                            {
+                                "if": {
+                                    "properties": {
+                                        "use": {
+                                            "const": "llm"
+                                        }
+                                    }
+                                },
+                                "then": {
+                                    "properties": {
+                                        "url": false
+                                    }
+                                }
+                            },
+                            {
+                                "if": {
+                                    "properties": {
+                                        "use": {
+                                            "const": "http"
+                                        }
+                                    }
+                                },
+                                "then": {
+                                    "properties": {
+                                        "model": false
+                                    }
+                                }
+                            }
+                        ]
                     }
                 }
             }
