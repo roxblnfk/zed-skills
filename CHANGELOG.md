@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/roxblnfk/zed-skills/compare/v0.1.0...v0.2.0) (2026-07-06)
+
+
+### Features
+
+* **cli:** skills update --check with exit code 5 (changes pending) ([700bf51](https://github.com/roxblnfk/zed-skills/commit/700bf51fd52915e3fcc624aa375126ccc71f7d68))
+* **core:** configurable lockfile location via `lock-file` manifest option ([de05682](https://github.com/roxblnfk/zed-skills/commit/de05682438a321124dc4d2b68a788594690daacf))
+* **extension:** bundled skills: check task; create_worktree hook docs ([870c895](https://github.com/roxblnfk/zed-skills/commit/870c895959f04ebb80ee4667001a7e88deaffa68))
+* **extension:** gutter runnables + bundled tasks for skills.json sync ([4a5a317](https://github.com/roxblnfk/zed-skills/commit/4a5a31791453b7ae5776e84e3cd4d105eed4ded5))
+* **lsp:** SKILL.md frontmatter completion ([bf6ed34](https://github.com/roxblnfk/zed-skills/commit/bf6ed34a76e51ffe83510eb0ae4a6e2c28febf1a))
+* **zed:** extension crate — languages, grammars, skills lsp wiring ([b792479](https://github.com/roxblnfk/zed-skills/commit/b792479527b380ab5a5ddc90c6ea138f9ebd4ac5))
+
 ## 0.1.0 (2026-07-06)
 
 
