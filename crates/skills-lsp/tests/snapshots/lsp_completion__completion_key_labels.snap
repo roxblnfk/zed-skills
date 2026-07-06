@@ -1,0 +1,23 @@
+---
+source: crates/skills-lsp/tests/lsp_completion.rs
+expression: labels
+---
+[
+  "agent",
+  "allowed-tools",
+  "argument-hint",
+  "arguments",
+  "compatibility",
+  "context",
+  "disable-model-invocation",
+  "disallowed-tools",
+  "effort",
+  "hooks",
+  "license",
+  "metadata",
+  "model",
+  "paths",
+  "shell",
+  "user-invocable",
+  "when_to_use"
+]
