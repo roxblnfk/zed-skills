@@ -4,6 +4,13 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag_name:
+        description: Tag to build and attach assets to
+        required: false
+        type: string
+        default: ''
 
 env:
   CARGO_TERM_COLOR: always
@@ -59,7 +66,10 @@ jobs:
           EOF
 
       - name: Build
-        run: cargo build --release --locked -p skills --target ${{ matrix.target }}
+        # No --locked: release-please bumps [workspace.package] version without
+        # touching Cargo.lock, so the lockfile's local-crate versions lag by one
+        # release and cargo resyncs them here. External deps stay pinned.
+        run: cargo build --release -p skills --target ${{ matrix.target }}
 
       - name: Package (unix)
         if: runner.os != 'Windows'
@@ -89,7 +99,8 @@ jobs:
           if-no-files-found: error
 
       - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: inputs.tag_name != '' || startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ inputs.tag_name != '' && inputs.tag_name || github.ref_name }}
           files: ${{ env.ASSET }}
