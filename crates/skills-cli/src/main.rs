@@ -30,6 +30,13 @@ enum Command {
         force: bool,
     },
     /// Sync skills from all configured donors into the target directory.
+    #[command(after_help = "Exit codes:\n  \
+        0  success / in sync\n  \
+        1  usage or config error\n  \
+        2  skill name conflict\n  \
+        3  audit block\n  \
+        4  network or provider error\n  \
+        5  changes pending (--check only)")]
     Update {
         /// Restrict the sync to matching packages (`vendor/package` or
         /// `vendor/*`). Naming a package implicitly trusts it and enables
@@ -40,6 +47,12 @@ enum Command {
         /// writing anything.
         #[arg(long)]
         dry_run: bool,
+        /// Check whether the target is in sync with the donors without
+        /// writing anything (compact output; normal network/cache semantics,
+        /// so remote drift is detected). Exit 0 when in sync, 5 when changes
+        /// are pending.
+        #[arg(long, conflicts_with = "dry_run")]
+        check: bool,
         /// Override the sync target from skills.json.
         #[arg(long, value_name = "PATH")]
         target: Option<String>,
@@ -106,9 +119,12 @@ enum Command {
 }
 
 /// A command failure carrying its exit code (spec §10: 0 ok, 1 usage/config,
-/// 2 conflict, 3 audit block, 4 provider error).
+/// 2 conflict, 3 audit block, 4 provider error, 5 changes pending — the
+/// `update --check` "out of sync" status, not a failure).
 pub(crate) struct CliError {
     pub code: u8,
+    /// Printed to stderr as `error: ...`; empty for pure status codes
+    /// (exit 5) whose report already went to stdout.
     pub message: String,
 }
 
@@ -117,6 +133,15 @@ impl CliError {
         CliError {
             code: 1,
             message: message.into(),
+        }
+    }
+
+    /// `update --check` found pending changes (exit code 5). The compact
+    /// report is already on stdout; nothing is printed to stderr.
+    fn changes_pending() -> Self {
+        CliError {
+            code: 5,
+            message: String::new(),
         }
     }
 
@@ -178,6 +203,7 @@ async fn main() -> ExitCode {
         Command::Update {
             packages,
             dry_run,
+            check,
             target,
             alias,
             from,
@@ -189,6 +215,7 @@ async fn main() -> ExitCode {
             commands::update::run(
                 &cwd,
                 dry_run,
+                check,
                 target,
                 alias,
                 from,
@@ -231,7 +258,9 @@ async fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("error: {}", err.message);
+            if !err.message.is_empty() {
+                eprintln!("error: {}", err.message);
+            }
             ExitCode::from(err.code)
         }
     }

@@ -1,0 +1,10 @@
+---
+source: crates/skills-cli/tests/e2e_check.rs
+assertion_line: 35
+expression: stdout_of(&assert)
+---
+skills: 3 to add
+  + code-review (dir/skills-src)
+  + docs-helper (dir/skills-src)
+  + plain (dir/skills-src)
+run `skills update` to apply

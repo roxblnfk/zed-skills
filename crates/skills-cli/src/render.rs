@@ -130,6 +130,60 @@ pub fn render_update(report: &SyncReport) -> String {
     out
 }
 
+/// Whether `update --check` should exit with code 5: any planned
+/// add/update/remove means the target is out of sync with the donors.
+pub fn check_pending(report: &SyncReport) -> bool {
+    report.count(SyncAction::Add)
+        + report.count(SyncAction::Update)
+        + report.count(SyncAction::Remove)
+        > 0
+}
+
+/// Compact `update --check` report: one line when in sync; counts plus
+/// per-skill one-liners and an apply hint when changes are pending. Audit
+/// findings and notes are intentionally omitted — `--check` is a fast
+/// staleness signal (conflicts and audit blocks abort earlier, exit 2 / 3).
+pub fn render_check(report: &SyncReport) -> String {
+    if !check_pending(report) {
+        let n = report.entries.len();
+        return format!(
+            "skills: up to date ({n} {})\n",
+            if n == 1 { "skill" } else { "skills" }
+        );
+    }
+
+    let mut parts = Vec::new();
+    for (action, verb) in [
+        (SyncAction::Add, "to add"),
+        (SyncAction::Update, "to update"),
+        (SyncAction::Remove, "to remove"),
+    ] {
+        let n = report.count(action);
+        if n > 0 {
+            parts.push(format!("{n} {verb}"));
+        }
+    }
+    let up_to_date = report.count(SyncAction::Skip);
+    let mut out = format!("skills: {}", parts.join(", "));
+    if up_to_date > 0 {
+        out.push_str(&format!(" ({up_to_date} up to date)"));
+    }
+    out.push('\n');
+
+    // Entries are already sorted by (vendor, id).
+    for entry in &report.entries {
+        let sign = match entry.action {
+            SyncAction::Add => '+',
+            SyncAction::Update => '~',
+            SyncAction::Remove => '-',
+            SyncAction::Skip => continue,
+        };
+        out.push_str(&format!("  {sign} {} ({})\n", entry.id, entry.vendor));
+    }
+    out.push_str("run `skills update` to apply\n");
+    out
+}
+
 fn plural(n: usize) -> String {
     if n == 1 {
         "1 file".to_string()
@@ -241,4 +295,79 @@ pub fn render_show(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(vendor: &str, id: &str, action: SyncAction) -> skills_core::pipeline::SyncEntry {
+        skills_core::pipeline::SyncEntry {
+            vendor: vendor.to_string(),
+            id: id.to_string(),
+            action,
+            file_count: 1,
+            verdict: None,
+            findings: Vec::new(),
+            audit_cached: false,
+        }
+    }
+
+    fn report(entries: Vec<skills_core::pipeline::SyncEntry>) -> SyncReport {
+        SyncReport {
+            target_rel: ".agents/skills".to_string(),
+            dry_run: true,
+            audit_mode: AuditMode::default(),
+            entries,
+            aliases: Vec::new(),
+            notes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn check_in_sync_is_one_line() {
+        let report = report(vec![
+            entry("dir/skills-src", "a", SyncAction::Skip),
+            entry("dir/skills-src", "b", SyncAction::Skip),
+        ]);
+        assert!(!check_pending(&report));
+        assert_eq!(render_check(&report), "skills: up to date (2 skills)\n");
+    }
+
+    #[test]
+    fn check_in_sync_singular_and_empty() {
+        let one = report(vec![entry("dir/x", "a", SyncAction::Skip)]);
+        assert_eq!(render_check(&one), "skills: up to date (1 skill)\n");
+        let none = report(Vec::new());
+        assert!(!check_pending(&none));
+        assert_eq!(render_check(&none), "skills: up to date (0 skills)\n");
+    }
+
+    #[test]
+    fn check_out_of_sync_lists_changes_and_hint() {
+        let report = report(vec![
+            entry("acme/skills", "code-review", SyncAction::Add),
+            entry("dir/skills-src", "deploy", SyncAction::Update),
+            entry("dir/skills-src", "kept", SyncAction::Skip),
+            entry("gone/vendor", "old-skill", SyncAction::Remove),
+        ]);
+        assert!(check_pending(&report));
+        assert_eq!(
+            render_check(&report),
+            "skills: 1 to add, 1 to update, 1 to remove (1 up to date)\n\
+             \x20 + code-review (acme/skills)\n\
+             \x20 ~ deploy (dir/skills-src)\n\
+             \x20 - old-skill (gone/vendor)\n\
+             run `skills update` to apply\n"
+        );
+    }
+
+    #[test]
+    fn check_omits_zero_counts() {
+        let report = report(vec![entry("acme/skills", "new", SyncAction::Add)]);
+        assert_eq!(
+            render_check(&report),
+            "skills: 1 to add\n  + new (acme/skills)\nrun `skills update` to apply\n"
+        );
+    }
 }

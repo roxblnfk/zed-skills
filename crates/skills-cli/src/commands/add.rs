@@ -122,7 +122,8 @@ pub async fn run(
     // 6. Sync.
     super::update::run(
         cwd,
-        false,
+        /* dry_run */ false,
+        /* check */ false,
         None,
         Vec::new(),
         None,

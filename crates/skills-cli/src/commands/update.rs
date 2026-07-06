@@ -11,6 +11,7 @@ use crate::render;
 pub async fn run(
     cwd: &Path,
     dry_run: bool,
+    check: bool,
     target: Option<String>,
     alias: Vec<String>,
     from: Option<String>,
@@ -27,7 +28,11 @@ pub async fn run(
         PrepareOptions {
             target_override: target,
             alias_override,
-            dry_run,
+            // --check is a dry run with a compact report and a status exit
+            // code: the full pipeline runs up to and including Plan (normal
+            // cache/network semantics so remote drift is caught), Sync never
+            // writes. Conflicts and audit blocks abort the same way (2 / 3).
+            dry_run: dry_run || check,
             refresh,
             run,
         },
@@ -38,6 +43,14 @@ pub async fn run(
     let locators = super::locators(ctx.discovery_enabled());
     let chain = super::audit_chain(&ctx.manifest)?;
     let report = run_update(&ctx, &providers, &locators, &chain).await?;
+
+    if check {
+        print!("{}", render::render_check(&report));
+        if render::check_pending(&report) {
+            return Err(CliError::changes_pending());
+        }
+        return Ok(());
+    }
 
     print!("{}", render::render_update(&report));
 
