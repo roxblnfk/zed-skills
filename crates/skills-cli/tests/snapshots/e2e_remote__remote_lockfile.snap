@@ -1,0 +1,40 @@
+---
+source: crates/skills-cli/tests/e2e_remote.rs
+expression: "redact(&lock_raw, &server.uri())"
+---
+{
+  "version": 1,
+  "skills": [
+    {
+      "id": "code-review",
+      "vendor": "acme/skills",
+      "origin": {
+        "type": "remote",
+        "host": "[host]",
+        "package": "acme/skills",
+        "ref": "v1.0.0"
+      },
+      "ref_resolved": "v1.0.0",
+      "content_hash": "[hash]",
+      "files": [
+        "SKILL.md",
+        "scripts/run.ps1"
+      ]
+    },
+    {
+      "id": "deep-skill",
+      "vendor": "acme/skills",
+      "origin": {
+        "type": "remote",
+        "host": "[host]",
+        "package": "acme/skills",
+        "ref": "v1.0.0"
+      },
+      "ref_resolved": "v1.0.0",
+      "content_hash": "[hash]",
+      "files": [
+        "SKILL.md"
+      ]
+    }
+  ]
+}

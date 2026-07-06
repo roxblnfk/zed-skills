@@ -1,0 +1,7 @@
+---
+source: crates/skills-cli/tests/e2e_remote.rs
+expression: "tree_listing(&target).join(\"\\n\")"
+---
+code-review/SKILL.md
+code-review/scripts/run.ps1
+deep-skill/SKILL.md

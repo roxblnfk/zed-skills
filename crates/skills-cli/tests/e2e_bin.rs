@@ -25,6 +25,30 @@ fn init_works_in_empty_dir_without_composer_json() {
     let raw = std::fs::read_to_string(tmp.path().join("skills.json")).unwrap();
     // The stub must be a valid manifest.
     Manifest::parse(&raw).unwrap();
+    // The archive cache is gitignored from the start.
+    let gitignore = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+    assert!(
+        gitignore.lines().any(|l| l == ".skills-cache/"),
+        "{gitignore}"
+    );
+}
+
+#[test]
+fn init_appends_cache_entry_to_existing_gitignore() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join(".gitignore"), "/target\n").unwrap();
+    skills_cmd(tmp.path()).arg("init").assert().success();
+    let gitignore = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+    assert!(gitignore.starts_with("/target\n"), "{gitignore}");
+    assert!(gitignore.contains(".skills-cache/"), "{gitignore}");
+
+    // Idempotent: a second init (--force) does not duplicate the entry.
+    skills_cmd(tmp.path())
+        .args(["init", "--force"])
+        .assert()
+        .success();
+    let again = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+    assert_eq!(gitignore, again);
 }
 
 #[test]
@@ -38,11 +62,12 @@ fn init_refuses_overwrite_without_force() {
         .code(1);
     let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
     assert!(stderr.contains("--force"), "{stderr}");
-    // Untouched.
+    // Untouched: no manifest rewrite, no .gitignore side effects.
     assert_eq!(
         std::fs::read_to_string(tmp.path().join("skills.json")).unwrap(),
         "{ \"target\": \"x/y\" }"
     );
+    assert!(!tmp.path().join(".gitignore").exists());
 }
 
 #[test]
