@@ -1,0 +1,18 @@
+---
+source: crates/skills-lsp/tests/lsp_skill_docs.rs
+expression: simplify(&diags)
+---
+[
+  {
+    "code": "no-description",
+    "message": "frontmatter has no 'description'",
+    "range": "0:0-0:3",
+    "severity": "warning"
+  },
+  {
+    "code": "curl-pipe-shell",
+    "message": "curl-pipe-shell: curl output piped into a shell — blocks `skills update` under audit mode 'block'",
+    "range": "4:0-4:46",
+    "severity": "error"
+  }
+]

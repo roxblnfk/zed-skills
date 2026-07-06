@@ -1,0 +1,18 @@
+---
+source: crates/skills-lsp/tests/lsp_manifest_diags.rs
+expression: simplify(&diags)
+---
+[
+  {
+    "code": "invalid",
+    "message": "alias '.agents/skills' must not equal the target '.agents/skills'",
+    "range": "2:14-2:30",
+    "severity": "error"
+  },
+  {
+    "code": "invalid",
+    "message": "invalid trusted pattern 'bare': expected 'vendor/package' or 'vendor/*'",
+    "range": "1:24-1:30",
+    "severity": "error"
+  }
+]

@@ -1,0 +1,12 @@
+---
+source: crates/skills-lsp/tests/lsp_manifest_diags.rs
+expression: simplify(&diags)
+---
+[
+  {
+    "code": "stale",
+    "message": "skills out of sync (1 to add, 0 to update, 0 to remove) — run `skills update`",
+    "range": "0:0-0:1",
+    "severity": "info"
+  }
+]

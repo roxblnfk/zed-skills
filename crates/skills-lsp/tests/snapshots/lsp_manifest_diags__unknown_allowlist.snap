@@ -1,0 +1,18 @@
+---
+source: crates/skills-lsp/tests/lsp_manifest_diags.rs
+expression: simplify(&diags)
+---
+[
+  {
+    "code": "unknown-skill",
+    "message": "acme/skills: skills[] entry 'ghost' matches no skill of this donor",
+    "range": "3:26-3:33",
+    "severity": "warning"
+  },
+  {
+    "code": "stale",
+    "message": "skills out of sync (1 to add, 0 to update, 0 to remove) — run `skills update`",
+    "range": "0:0-0:1",
+    "severity": "info"
+  }
+]

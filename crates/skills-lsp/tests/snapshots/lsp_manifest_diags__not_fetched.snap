@@ -1,0 +1,12 @@
+---
+source: crates/skills-lsp/tests/lsp_manifest_diags.rs
+expression: simplify(&diags)
+---
+[
+  {
+    "code": "not-fetched",
+    "message": "acme/skills: not fetched yet — run `skills update`",
+    "range": "2:4-2:67",
+    "severity": "hint"
+  }
+]
