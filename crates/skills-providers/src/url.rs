@@ -11,7 +11,8 @@ use async_trait::async_trait;
 
 use sha2::{Digest, Sha256};
 use skills_core::domain::{
-    MaterializedVendor, Origin, ProviderId, SkillsFilter, VendorName, VendorRef,
+    DonorStatus, MaterializedVendor, Origin, ProviderId, SkillsFilter, SourceHint, TrustBasis,
+    VendorName, VendorRef,
 };
 use skills_core::error::{DiscoverError, MaterializeError};
 use skills_core::pipeline::ctx::Ctx;
@@ -58,6 +59,9 @@ impl VendorProvider for UrlProvider {
                 name: vendor.name().clone(),
                 origin: vendor.origin().clone(),
                 filter: SkillsFilter::from_manifest(entry.skills.clone()),
+                // remote[] entries are user-declared - implicitly trusted.
+                trust: TrustBasis::UserDeclared,
+                status: DonorStatus::Declared,
                 vendor: Arc::new(vendor),
             });
         }
@@ -160,6 +164,7 @@ impl Vendor for UrlVendor {
             root: dir,
             ref_resolved: None,
             filter: SkillsFilter::All,
+            source_hint: SourceHint::Probe,
         })
     }
 }

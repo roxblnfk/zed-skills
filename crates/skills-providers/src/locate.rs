@@ -1,35 +1,37 @@
 //! Skill locators.
 //!
 //! Chain order (wired by the CLI): `ComposerDeclaredLocator` →
-//! `WellKnownLocator` → `DeclaredLocator`.
+//! `WellKnownLocator` → `RecursiveFallbackLocator` → `DeclaredLocator`.
+//! Applicability is routed by [`SourceHint`] on the materialized vendor:
 //!
-//! - `ComposerDeclaredLocator` — remote vendors shipping a `composer.json`
-//!   with `extra.skills.source` (SPEC §6.1). Malformed or absent
-//!   declarations fall through to the next locator, never block the run.
-//! - `WellKnownLocator` — remote vendors shipping conventional containers
-//!   (SPEC §6.2): `.agents/skills`, `.claude/skills`, `.cursor/skills`,
-//!   `skills`, `resources/skills`; skills at depth 1 or in a depth-2
-//!   catalog layout.
-//! - `DeclaredLocator` — explicit-root flavor for local `local.dir` donors:
-//!   the vendor root itself is the skills root.
-//!
-//! `RecursiveFallbackLocator` (discovery-gated bounded walk) lands in M3.
+//! - `ExplicitRoot` (local `local.dir` donors) — the vendor root itself is
+//!   the skills root ([`DeclaredLocator`]).
+//! - `Declared(source)` (composer donors with `extra.skills.source`) — the
+//!   declared directory is the skills root ([`ComposerDeclaredLocator`]).
+//! - `Probe` (remote/url donors) — probe a shipped `composer.json`
+//!   declaration, then the well-known containers; the recursive fallback
+//!   applies only when discovery is enabled.
+//! - `Discovery` (undeclared composer donors admitted via discovery) —
+//!   well-known containers first; the bounded recursive fallback only when
+//!   the containers yielded nothing (SPEC §6.3).
 
 use std::path::Path;
 
-use skills_core::domain::{MaterializedVendor, Origin, SkillsRoot};
+use skills_core::domain::{MaterializedVendor, SkillsRoot, SourceHint};
 use skills_core::error::ScanError;
+use skills_core::paths::rel_to_path;
 use skills_core::traits::{Located, SkillLocator};
 
-/// Declared locator, explicit-root flavor: a *local* vendor's root is
+use crate::treescan;
+
+/// Declared locator, explicit-root flavor: a `local.dir` vendor's root is
 /// itself the skills root. Immediate subdirectories containing `SKILL.md`
-/// become skills. Not applicable to remote vendors — a repo root is not a
-/// skills root.
+/// become skills.
 pub struct DeclaredLocator;
 
 impl SkillLocator for DeclaredLocator {
     fn locate(&self, vendor: &MaterializedVendor) -> Result<Located, ScanError> {
-        if !matches!(vendor.origin, Origin::Local { .. }) {
+        if vendor.source_hint != SourceHint::ExplicitRoot {
             return Ok(Located::NotApplicable);
         }
         Ok(Located::Found(vec![SkillsRoot {
@@ -38,28 +40,40 @@ impl SkillLocator for DeclaredLocator {
     }
 }
 
-/// Composer-declared locator: `composer.json` with `extra.skills.source`
-/// names the skills root. The source must be a non-empty relative path that
-/// does not escape the package root. Anything malformed (bad JSON,
-/// `extra.skills` without `source`, absolute/escaping path, missing dir)
-/// makes this locator not applicable — the chain moves on.
+/// Composer-declared locator: `extra.skills.source` names the skills root.
+///
+/// - Composer donors carry their pre-validated source on the vendor
+///   ([`SourceHint::Declared`]); a declared-but-missing directory yields
+///   zero skills (the donor never falls through to discovery).
+/// - Remote/url donors ([`SourceHint::Probe`]) are probed via the shipped
+///   `composer.json`; anything malformed (bad JSON, `extra.skills` without
+///   `source`, absolute/escaping path, missing dir) makes this locator not
+///   applicable — the chain moves on.
 pub struct ComposerDeclaredLocator;
 
 impl SkillLocator for ComposerDeclaredLocator {
     fn locate(&self, vendor: &MaterializedVendor) -> Result<Located, ScanError> {
-        if matches!(vendor.origin, Origin::Local { .. }) {
-            // Local `local.dir` donors keep their explicit-root semantics;
-            // the composer *provider* lands in M3.
-            return Ok(Located::NotApplicable);
+        match &vendor.source_hint {
+            SourceHint::Declared(source) => {
+                let root = vendor.root.join(rel_to_path(source));
+                if root.is_dir() {
+                    Ok(Located::Found(vec![SkillsRoot { path: root }]))
+                } else {
+                    Ok(Located::Found(vec![]))
+                }
+            }
+            SourceHint::Probe => {
+                let Some(source) = declared_source(&vendor.root) else {
+                    return Ok(Located::NotApplicable);
+                };
+                let root = vendor.root.join(source);
+                if !root.is_dir() {
+                    return Ok(Located::NotApplicable);
+                }
+                Ok(Located::Found(vec![SkillsRoot { path: root }]))
+            }
+            _ => Ok(Located::NotApplicable),
         }
-        let Some(source) = declared_source(&vendor.root) else {
-            return Ok(Located::NotApplicable);
-        };
-        let root = vendor.root.join(source);
-        if !root.is_dir() {
-            return Ok(Located::NotApplicable);
-        }
-        Ok(Located::Found(vec![SkillsRoot { path: root }]))
     }
 }
 
@@ -94,15 +108,17 @@ fn declared_source(root: &Path) -> Option<std::path::PathBuf> {
     (depth > 0).then_some(out)
 }
 
-/// Well-known container locator for remote vendors. Every existing
-/// container contributes:
+/// Well-known container locator. Every existing container contributes:
 /// - itself as a root (skills at depth 1: `<c>/<name>/SKILL.md`), and
 /// - each immediate subdirectory *without* its own `SKILL.md` that holds
 ///   skill dirs one level deeper (depth-2 catalog:
 ///   `<c>/<category>/<name>/SKILL.md`).
 ///
 /// A recognized skill dir is never treated as a category (no nested
-/// skills).
+/// skills). For discovery donors ([`SourceHint::Discovery`]) the locator is
+/// applicable only when the containers hold at least one actual skill —
+/// otherwise the chain proceeds to the recursive fallback (SPEC §6.3:
+/// "fallback only when no container yielded anything").
 pub struct WellKnownLocator;
 
 /// Conventional container roots, probed in order (SPEC §6.2).
@@ -116,8 +132,23 @@ pub const CONTAINER_ROOTS: [&str; 5] = [
 
 impl SkillLocator for WellKnownLocator {
     fn locate(&self, vendor: &MaterializedVendor) -> Result<Located, ScanError> {
-        if matches!(vendor.origin, Origin::Local { .. }) {
-            return Ok(Located::NotApplicable);
+        match vendor.source_hint {
+            SourceHint::Probe => {}
+            SourceHint::Discovery => {
+                // Roots = parents of the actual container skills; empty
+                // containers do not block the recursive fallback.
+                let skills = treescan::container_skill_dirs(&vendor.root);
+                if skills.is_empty() {
+                    return Ok(Located::NotApplicable);
+                }
+                return Ok(Located::Found(
+                    treescan::parent_roots(&skills)
+                        .into_iter()
+                        .map(|path| SkillsRoot { path })
+                        .collect(),
+                ));
+            }
+            _ => return Ok(Located::NotApplicable),
         }
         let io_err = |path: &Path, source: std::io::Error| ScanError::Io {
             vendor: vendor.name.clone(),
@@ -166,33 +197,90 @@ impl SkillLocator for WellKnownLocator {
     }
 }
 
+/// Bounded recursive fallback (SPEC §6.3): max depth 5 below the package
+/// root, skipping `vendor/`, `node_modules/`, `.git/` and dot-prefixed
+/// dirs, never descending into a subdir carrying its own `composer.json`;
+/// the first `SKILL.md` on a branch stops descent.
+///
+/// Applies to discovery donors (undeclared composer packages — the chain
+/// only reaches this point when the containers yielded nothing) and, when
+/// the global discovery flag is on, to remote/url donors with neither a
+/// declared source nor a well-known container.
+pub struct RecursiveFallbackLocator {
+    /// Effective discovery flag of the run — gates the remote/url path.
+    pub discovery: bool,
+}
+
+impl RecursiveFallbackLocator {
+    pub fn new(discovery: bool) -> Self {
+        RecursiveFallbackLocator { discovery }
+    }
+}
+
+impl SkillLocator for RecursiveFallbackLocator {
+    fn locate(&self, vendor: &MaterializedVendor) -> Result<Located, ScanError> {
+        let applies = match vendor.source_hint {
+            SourceHint::Discovery => true,
+            SourceHint::Probe => self.discovery,
+            _ => false,
+        };
+        if !applies {
+            return Ok(Located::NotApplicable);
+        }
+        let skills = treescan::fallback_skill_dirs(&vendor.root);
+        Ok(Located::Found(
+            treescan::parent_roots(&skills)
+                .into_iter()
+                .map(|path| SkillsRoot { path })
+                .collect(),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use skills_core::domain::{SkillsFilter, VendorName};
+    use skills_core::domain::{Origin, SkillsFilter, VendorName};
 
-    fn local_vendor(root: &Path) -> MaterializedVendor {
+    fn vendor_with(root: &Path, origin: Origin, hint: SourceHint) -> MaterializedVendor {
         MaterializedVendor {
-            name: VendorName::new("dir/x"),
-            origin: Origin::Local { path: "./x".into() },
+            name: VendorName::new("test/vendor"),
+            origin,
             root: root.to_path_buf(),
             ref_resolved: None,
             filter: SkillsFilter::All,
+            source_hint: hint,
         }
     }
 
+    fn local_vendor(root: &Path) -> MaterializedVendor {
+        vendor_with(
+            root,
+            Origin::Local { path: "./x".into() },
+            SourceHint::ExplicitRoot,
+        )
+    }
+
     fn remote_vendor(root: &Path) -> MaterializedVendor {
-        MaterializedVendor {
-            name: VendorName::new("acme/skills"),
-            origin: Origin::Remote {
+        vendor_with(
+            root,
+            Origin::Remote {
                 host: "github.com".into(),
                 package: "acme/skills".into(),
                 r#ref: None,
             },
-            root: root.to_path_buf(),
-            ref_resolved: Some("v1.0.0".into()),
-            filter: SkillsFilter::All,
-        }
+            SourceHint::Probe,
+        )
+    }
+
+    fn discovery_vendor(root: &Path) -> MaterializedVendor {
+        vendor_with(
+            root,
+            Origin::Local {
+                path: "vendor/acme/undeclared".into(),
+            },
+            SourceHint::Discovery,
+        )
     }
 
     fn make_skill(root: &Path, rel: &str) {
@@ -243,6 +331,43 @@ mod tests {
             Located::Found(vec![SkillsRoot {
                 path: tmp.path().join("resources").join("my-skills")
             }])
+        );
+    }
+
+    #[test]
+    fn composer_donor_uses_the_prevalidated_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_skill(tmp.path(), "my-skills/alpha");
+        let vendor = vendor_with(
+            tmp.path(),
+            Origin::Local {
+                path: "vendor/acme/pro".into(),
+            },
+            SourceHint::Declared("my-skills".into()),
+        );
+        assert_eq!(
+            ComposerDeclaredLocator.locate(&vendor).unwrap(),
+            Located::Found(vec![SkillsRoot {
+                path: tmp.path().join("my-skills")
+            }])
+        );
+    }
+
+    #[test]
+    fn composer_donor_with_missing_declared_dir_yields_zero_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A declared donor never falls through to discovery locators.
+        make_skill(tmp.path(), "skills/should-not-be-found");
+        let vendor = vendor_with(
+            tmp.path(),
+            Origin::Local {
+                path: "vendor/acme/pro".into(),
+            },
+            SourceHint::Declared("missing-dir".into()),
+        );
+        assert_eq!(
+            ComposerDeclaredLocator.locate(&vendor).unwrap(),
+            Located::Found(vec![])
         );
     }
 
@@ -400,6 +525,84 @@ mod tests {
         make_skill(tmp.path(), "skills/alpha");
         assert_eq!(
             WellKnownLocator.locate(&local_vendor(tmp.path())).unwrap(),
+            Located::NotApplicable
+        );
+    }
+
+    #[test]
+    fn well_known_discovery_requires_actual_skills() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Empty container: not applicable, the fallback gets its shot.
+        std::fs::create_dir_all(tmp.path().join("skills")).unwrap();
+        assert_eq!(
+            WellKnownLocator
+                .locate(&discovery_vendor(tmp.path()))
+                .unwrap(),
+            Located::NotApplicable
+        );
+
+        make_skill(tmp.path(), ".claude/skills/flat");
+        make_skill(tmp.path(), "skills/php/catalogued");
+        let located = WellKnownLocator
+            .locate(&discovery_vendor(tmp.path()))
+            .unwrap();
+        assert_eq!(
+            located,
+            Located::Found(vec![
+                SkillsRoot {
+                    path: tmp.path().join(".claude").join("skills")
+                },
+                SkillsRoot {
+                    path: tmp.path().join("skills").join("php")
+                },
+            ])
+        );
+    }
+
+    // --- RecursiveFallbackLocator ---------------------------------------
+
+    #[test]
+    fn fallback_applies_to_discovery_vendors() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_skill(tmp.path(), "lib/prompts/helper");
+        let located = RecursiveFallbackLocator::new(false)
+            .locate(&discovery_vendor(tmp.path()))
+            .unwrap();
+        assert_eq!(
+            located,
+            Located::Found(vec![SkillsRoot {
+                path: tmp.path().join("lib").join("prompts")
+            }])
+        );
+    }
+
+    #[test]
+    fn fallback_gates_remote_vendors_on_the_discovery_flag() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_skill(tmp.path(), "lib/helper");
+        let vendor = remote_vendor(tmp.path());
+        assert_eq!(
+            RecursiveFallbackLocator::new(false)
+                .locate(&vendor)
+                .unwrap(),
+            Located::NotApplicable
+        );
+        assert_eq!(
+            RecursiveFallbackLocator::new(true).locate(&vendor).unwrap(),
+            Located::Found(vec![SkillsRoot {
+                path: tmp.path().join("lib")
+            }])
+        );
+    }
+
+    #[test]
+    fn fallback_never_applies_to_explicit_root_vendors() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_skill(tmp.path(), "lib/helper");
+        assert_eq!(
+            RecursiveFallbackLocator::new(true)
+                .locate(&local_vendor(tmp.path()))
+                .unwrap(),
             Located::NotApplicable
         );
     }

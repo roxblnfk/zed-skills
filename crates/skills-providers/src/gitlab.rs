@@ -14,7 +14,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use skills_core::domain::{
-    MaterializedVendor, Origin, ProviderId, SkillsFilter, VendorName, VendorRef,
+    DonorStatus, MaterializedVendor, Origin, ProviderId, SkillsFilter, TrustBasis, VendorName,
+    VendorRef,
 };
 use skills_core::error::{DiscoverError, MaterializeError};
 use skills_core::pipeline::ctx::Ctx;
@@ -109,6 +110,9 @@ impl VendorProvider for GitlabProvider {
                 name: vendor.name().clone(),
                 origin: vendor.origin().clone(),
                 filter: SkillsFilter::from_manifest(entry.skills.clone()),
+                // remote[] entries are user-declared - implicitly trusted.
+                trust: TrustBasis::UserDeclared,
+                status: DonorStatus::Declared,
                 vendor: Arc::new(vendor),
             });
         }

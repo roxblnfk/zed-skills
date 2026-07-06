@@ -124,6 +124,7 @@ pub(crate) async fn materialize_package(
         root: dir,
         ref_resolved: Some(resolved),
         filter: skills_core::domain::SkillsFilter::All,
+        source_hint: skills_core::domain::SourceHint::Probe,
     })
 }
 

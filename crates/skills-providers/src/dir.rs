@@ -11,7 +11,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use skills_core::domain::{
-    MaterializedVendor, Origin, ProviderId, SkillsFilter, VendorName, VendorRef,
+    DonorStatus, MaterializedVendor, Origin, ProviderId, SkillsFilter, SourceHint, TrustBasis,
+    VendorName, VendorRef,
 };
 use skills_core::error::{DiscoverError, MaterializeError};
 use skills_core::paths::join_declared;
@@ -60,6 +61,9 @@ impl VendorProvider for DirProvider {
                 origin: origin.clone(),
                 // local.dir entries have no per-donor allowlist syntax.
                 filter: SkillsFilter::All,
+                // Declared by the user in skills.json — implicitly trusted.
+                trust: TrustBasis::UserDeclared,
+                status: DonorStatus::Declared,
                 vendor: Arc::new(DirVendor { name, origin, root }),
             });
         }
@@ -113,6 +117,7 @@ impl Vendor for DirVendor {
             root: self.root.clone(),
             ref_resolved: None,
             filter: SkillsFilter::All,
+            source_hint: SourceHint::ExplicitRoot,
         })
     }
 }
