@@ -21,10 +21,12 @@ jobs:
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
 
-      # release-please bumps [workspace.package] version but cannot touch
-      # Cargo.lock. Resync the lockfile (workspace members only, external deps
-      # stay pinned) and commit it into the open release PR, so the merge lands
-      # a consistent tree and Release can build with --locked.
+      # When a release PR is open, enrich it in place before merge:
+      #   1. resync Cargo.lock (release-please bumps [workspace.package] version
+      #      but cannot touch the lockfile; workspace members only, external
+      #      deps stay pinned) so Release can build with --locked;
+      #   2. refresh the Vibe Index badge from the latest git history.
+      # Both commits land on the PR branch, so the merge is a consistent tree.
       - uses: actions/checkout@v7
         if: ${{ steps.rp.outputs.prs_created == 'true' }}
         with:
@@ -48,6 +50,13 @@ jobs:
             git commit -m "chore: sync Cargo.lock with release version"
             git push origin "$PR_BRANCH"
           fi
+
+      - name: Update Vibe Index badge
+        if: ${{ steps.rp.outputs.prs_created == 'true' }}
+        uses: roxblnfk/action-vibe-index@v1
+        with:
+          commit: true
+          push: true
 
   # On merge, release-please creates the tag + GitHub Release. A
   # GITHUB_TOKEN-created tag does not trigger the tag-push workflow, so build
