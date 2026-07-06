@@ -197,6 +197,38 @@ pub enum OnFail {
     Block,
 }
 
+/// One segment of a JSON path into `skills.json` (e.g. `remote[1].skills[0]`
+/// is `[Key("remote"), Index(1), Key("skills"), Index(0)]`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PathSeg {
+    Key(String),
+    Index(usize),
+}
+
+impl PathSeg {
+    pub fn key(k: &str) -> PathSeg {
+        PathSeg::Key(k.to_string())
+    }
+}
+
+/// A semantic validation problem, anchored to the offending field so
+/// span-aware frontends (the LSP server) can point at it. `path` is empty
+/// for document-level problems.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestIssue {
+    pub path: Vec<PathSeg>,
+    pub message: String,
+}
+
+impl ManifestIssue {
+    fn new(path: Vec<PathSeg>, message: impl Into<String>) -> Self {
+        ManifestIssue {
+            path,
+            message: message.into(),
+        }
+    }
+}
+
 impl Manifest {
     /// Load and validate the manifest at `path`.
     pub fn load(path: &Path) -> Result<Manifest, ManifestError> {
@@ -266,27 +298,52 @@ impl Manifest {
     }
 
     fn validate(&self) -> Result<(), ManifestError> {
-        let invalid = |msg: String| ManifestError::Invalid(msg);
+        match self.validate_issues().into_iter().next() {
+            Some(issue) => Err(ManifestError::Invalid(issue.message)),
+            None => Ok(()),
+        }
+    }
+
+    /// All semantic validation problems, each anchored to the offending
+    /// field. [`Manifest::parse`] fails on the first one; span-aware
+    /// frontends surface them all.
+    pub fn validate_issues(&self) -> Vec<ManifestIssue> {
+        let mut issues = Vec::new();
 
         // target
         let target_norm = match &self.target {
-            Some(t) => normalize_rel(t).map_err(|e| invalid(format!("invalid target: {e}")))?,
+            Some(t) => match normalize_rel(t) {
+                Ok(norm) => norm,
+                Err(e) => {
+                    issues.push(ManifestIssue::new(
+                        vec![PathSeg::key("target")],
+                        format!("invalid target: {e}"),
+                    ));
+                    DEFAULT_TARGET.to_string()
+                }
+            },
             None => DEFAULT_TARGET.to_string(),
         };
 
         // aliases
         if let Some(aliases) = &self.aliases {
             let mut seen = HashSet::new();
-            for alias in aliases {
-                let norm =
-                    normalize_rel(alias).map_err(|e| invalid(format!("invalid alias: {e}")))?;
-                if norm == target_norm {
-                    return Err(invalid(format!(
-                        "alias '{alias}' must not equal the target '{target_norm}'"
-                    )));
-                }
-                if !seen.insert(norm.clone()) {
-                    return Err(invalid(format!("duplicate alias '{norm}'")));
+            for (idx, alias) in aliases.iter().enumerate() {
+                let at = || vec![PathSeg::key("aliases"), PathSeg::Index(idx)];
+                match normalize_rel(alias) {
+                    Err(e) => issues.push(ManifestIssue::new(at(), format!("invalid alias: {e}"))),
+                    Ok(norm) if norm == target_norm => issues.push(ManifestIssue::new(
+                        at(),
+                        format!("alias '{alias}' must not equal the target '{target_norm}'"),
+                    )),
+                    Ok(norm) => {
+                        if !seen.insert(norm.clone()) {
+                            issues.push(ManifestIssue::new(
+                                at(),
+                                format!("duplicate alias '{norm}'"),
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -294,11 +351,14 @@ impl Manifest {
         // trusted patterns: vendor/package or vendor/* (exactly one slash,
         // both sides non-empty)
         if let Some(trusted) = &self.trusted {
-            for pattern in trusted {
+            for (idx, pattern) in trusted.iter().enumerate() {
                 if crate::pattern::VendorPattern::parse(pattern).is_err() {
-                    return Err(invalid(format!(
-                        "invalid trusted pattern '{pattern}': expected 'vendor/package' or 'vendor/*'"
-                    )));
+                    issues.push(ManifestIssue::new(
+                        vec![PathSeg::key("trusted"), PathSeg::Index(idx)],
+                        format!(
+                            "invalid trusted pattern '{pattern}': expected 'vendor/package' or 'vendor/*'"
+                        ),
+                    ));
                 }
             }
         }
@@ -306,13 +366,27 @@ impl Manifest {
         // local.dir
         if let Some(dirs) = self.local.as_ref().and_then(|l| l.dir.as_ref()) {
             let mut seen = HashSet::new();
-            for dir in dirs {
+            for (idx, dir) in dirs.iter().enumerate() {
+                let at = || {
+                    vec![
+                        PathSeg::key("local"),
+                        PathSeg::key("dir"),
+                        PathSeg::Index(idx),
+                    ]
+                };
                 if dir.trim().is_empty() {
-                    return Err(invalid("local.dir entry must not be empty".to_string()));
+                    issues.push(ManifestIssue::new(
+                        at(),
+                        "local.dir entry must not be empty",
+                    ));
+                    continue;
                 }
                 let key = dir.trim().replace('\\', "/");
                 if !seen.insert(key.clone()) {
-                    return Err(invalid(format!("duplicate local.dir entry '{dir}'")));
+                    issues.push(ManifestIssue::new(
+                        at(),
+                        format!("duplicate local.dir entry '{dir}'"),
+                    ));
                 }
             }
         }
@@ -321,30 +395,40 @@ impl Manifest {
         if let Some(remotes) = &self.remote {
             let mut seen = HashSet::new();
             for (idx, entry) in remotes.iter().enumerate() {
-                let key = validate_remote_entry(entry)
-                    .map_err(|e| invalid(format!("remote[{idx}]: {e}")))?;
-                if !seen.insert(key.clone()) {
-                    return Err(invalid(format!("remote[{idx}]: duplicate entry '{key}'")));
+                let at = || vec![PathSeg::key("remote"), PathSeg::Index(idx)];
+                match validate_remote_entry(entry) {
+                    Err(e) => issues.push(ManifestIssue::new(at(), format!("remote[{idx}]: {e}"))),
+                    Ok(key) => {
+                        if !seen.insert(key.clone()) {
+                            issues.push(ManifestIssue::new(
+                                at(),
+                                format!("remote[{idx}]: duplicate entry '{key}'"),
+                            ));
+                        }
+                    }
                 }
             }
         }
 
         // path-from-root: relative, plain segments only
         if let Some(p) = &self.path_from_root {
+            let at = || vec![PathSeg::key("path-from-root")];
             if p.trim().is_empty() {
-                return Err(invalid("path-from-root must not be empty".to_string()));
-            }
-            let plain = !crate::paths::is_absolute_like(p)
-                && p.split(['/', '\\'])
-                    .all(|seg| !seg.is_empty() && seg != "." && seg != "..");
-            if !plain {
-                return Err(invalid(format!(
-                    "path-from-root must be relative with plain segments, got '{p}'"
-                )));
+                issues.push(ManifestIssue::new(at(), "path-from-root must not be empty"));
+            } else {
+                let plain = !crate::paths::is_absolute_like(p)
+                    && p.split(['/', '\\'])
+                        .all(|seg| !seg.is_empty() && seg != "." && seg != "..");
+                if !plain {
+                    issues.push(ManifestIssue::new(
+                        at(),
+                        format!("path-from-root must be relative with plain segments, got '{p}'"),
+                    ));
+                }
             }
         }
 
-        Ok(())
+        issues
     }
 }
 
@@ -699,6 +783,62 @@ mod tests {
     fn audit_pipeline_bad_on_fail_rejected() {
         let e = err(r#"{ "audit": { "pipeline": [ { "use": "static", "on-fail": "off" } ] } }"#);
         assert!(e.starts_with("skills.json:"), "{e}");
+    }
+
+    #[test]
+    fn validate_issues_collects_all_with_paths() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "target": "../out",
+                "aliases": ["", ".claude/skills", "./.claude/skills"],
+                "trusted": ["acme/*", "bare"],
+                "local": { "dir": ["./a", ".\\a"] },
+                "remote": [
+                    { "from": "github", "package": "a/b" },
+                    { "from": "github", "package": "a/b" },
+                    { "from": "svn", "url": "x" }
+                ],
+                "path-from-root": "../x"
+            }"#,
+        )
+        .unwrap();
+        let issues = manifest.validate_issues();
+        let paths: Vec<(String, &str)> = issues
+            .iter()
+            .map(|i| {
+                let path = i
+                    .path
+                    .iter()
+                    .map(|s| match s {
+                        PathSeg::Key(k) => k.clone(),
+                        PathSeg::Index(i) => i.to_string(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(".");
+                let kind = i.message.split([':', ' ']).next().unwrap_or("");
+                (path, kind)
+            })
+            .collect();
+        let got: Vec<(&str, &str)> = paths.iter().map(|(p, k)| (p.as_str(), *k)).collect();
+        assert_eq!(
+            got,
+            [
+                ("target", "invalid"),
+                ("aliases.0", "invalid"),
+                ("aliases.2", "duplicate"),
+                ("trusted.1", "invalid"),
+                ("local.dir.1", "duplicate"),
+                ("remote.1", "remote[1]"),
+                ("remote.2", "remote[2]"),
+                ("path-from-root", "path-from-root"),
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_issues_empty_for_valid_manifest() {
+        let m = Manifest::parse(r#"{ "target": ".agents/skills" }"#).unwrap();
+        assert!(m.validate_issues().is_empty());
     }
 
     #[test]

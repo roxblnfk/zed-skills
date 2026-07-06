@@ -6,6 +6,7 @@
 //! ship.
 
 pub mod staticaudit;
+pub mod textcheck;
 
 use std::sync::Arc;
 
@@ -20,6 +21,7 @@ use skills_core::pipeline::ChainEntry;
 use skills_core::traits::Auditor;
 
 pub use staticaudit::StaticAuditor;
+pub use textcheck::{TextCheck, danger_checks, skill_md_checks};
 
 /// Building the audit chain from `skills.json` failed (a config error,
 /// exit 1).

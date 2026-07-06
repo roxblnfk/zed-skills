@@ -6,110 +6,21 @@
 //! - dangerous-pattern heuristics over every text file of the skill — Block,
 //!   with `file:line` locations. Binary files (null byte in the sniff window)
 //!   are skipped; reads are size-capped.
+//!
+//! The actual rules are pure text functions in [`crate::textcheck`], shared
+//! with the LSP server (which runs them over unsaved buffers).
 
 use std::io::Read;
 use std::path::Path;
-use std::sync::OnceLock;
 
 use async_trait::async_trait;
-use regex::Regex;
 
 use skills_core::audit::{AuditReport, AuditorId, Finding, Severity};
 use skills_core::domain::ResolvedSkill;
 use skills_core::error::AuditError;
-use skills_core::frontmatter;
 use skills_core::traits::Auditor;
 
-/// Per-file read cap for all checks (line count + pattern scan).
-const MAX_READ_BYTES: u64 = 1024 * 1024;
-/// Null-byte sniff window: a file with a NUL this early is binary.
-const BINARY_SNIFF_BYTES: usize = 8000;
-/// `SKILL.md` line-count threshold (inclusive maximum).
-const MAX_SKILL_MD_LINES: usize = 500;
-
-/// One dangerous-pattern heuristic. The whole rule set lives in this table —
-/// extend it here.
-struct DangerPattern {
-    id: &'static str,
-    /// Matched per line (the regex never sees a newline).
-    regex: &'static str,
-    message: &'static str,
-    severity: Severity,
-    /// Only applied to script files (`scripts/` dir or a script extension).
-    scripts_only: bool,
-}
-
-const DANGER_PATTERNS: &[DangerPattern] = &[
-    DangerPattern {
-        id: "curl-pipe-shell",
-        regex: r"(?i)\bcurl\b[^|]*\|\s*(?:sudo\s+)?(?:ba|z|da|fi|k)?sh\b",
-        message: "curl output piped into a shell",
-        severity: Severity::Block,
-        scripts_only: false,
-    },
-    DangerPattern {
-        id: "wget-pipe-shell",
-        regex: r"(?i)\bwget\b[^|]*\|\s*(?:sudo\s+)?(?:ba|z|da|fi|k)?sh\b",
-        message: "wget output piped into a shell",
-        severity: Severity::Block,
-        scripts_only: false,
-    },
-    DangerPattern {
-        id: "rm-rf-root",
-        regex: r#"\brm\s+(?:-[A-Za-z]+\s+)*-(?:rf|fr)[A-Za-z]*\s+/(?:\s|$|["'])"#,
-        message: "recursive force-delete of the filesystem root",
-        severity: Severity::Block,
-        scripts_only: false,
-    },
-    DangerPattern {
-        id: "base64-blob",
-        regex: r"[A-Za-z0-9+/=]{200,}",
-        message: "long base64-looking blob (possible obfuscated payload)",
-        severity: Severity::Block,
-        scripts_only: false,
-    },
-    DangerPattern {
-        id: "prompt-injection",
-        regex: r"(?i)ignore\s+(?:all\s+)?previous\s+instructions|disregard\s+all\s+prior",
-        message: "prompt-injection marker",
-        severity: Severity::Block,
-        scripts_only: false,
-    },
-    DangerPattern {
-        id: "ip-endpoint",
-        regex: r"https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",
-        message: "raw-IP http endpoint in a script (possible exfiltration)",
-        severity: Severity::Block,
-        scripts_only: true,
-    },
-];
-
-/// Extensions treated as scripts outside the `scripts/` directory.
-const SCRIPT_EXTENSIONS: &[&str] = &[
-    "sh", "bash", "zsh", "ps1", "psm1", "bat", "cmd", "py", "rb", "pl", "js", "mjs",
-];
-
-fn compiled_patterns() -> &'static [(usize, Regex)] {
-    static COMPILED: OnceLock<Vec<(usize, Regex)>> = OnceLock::new();
-    COMPILED.get_or_init(|| {
-        DANGER_PATTERNS
-            .iter()
-            .enumerate()
-            // The table is const and covered by a test; a bad regex is a bug.
-            .map(|(i, p)| (i, Regex::new(p.regex).expect("valid danger pattern")))
-            .collect()
-    })
-}
-
-fn is_script(rel_path: &str) -> bool {
-    if rel_path.starts_with("scripts/") {
-        return true;
-    }
-    match rel_path.rsplit_once('.') {
-        Some((_, ext)) => SCRIPT_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()),
-        None => false,
-    }
-}
+use crate::textcheck::{self, MAX_READ_BYTES};
 
 /// Read at most [`MAX_READ_BYTES`] of a file; `None` on IO errors
 /// (best-effort: an unreadable file is reported once, by the caller).
@@ -120,62 +31,26 @@ fn read_capped(path: &Path) -> Option<Vec<u8>> {
     Some(buf)
 }
 
-fn is_binary(bytes: &[u8]) -> bool {
-    bytes[..bytes.len().min(BINARY_SNIFF_BYTES)].contains(&0)
-}
-
-/// Frontmatter presence: an opening `---` line at byte 0 with a closing
-/// `---` line inside the reader's window (mirrors the best-effort reader).
-fn has_frontmatter(bytes: &[u8]) -> bool {
-    let window = &bytes[..bytes.len().min(frontmatter::READ_CAP)];
-    let window = window
-        .strip_prefix(&[0xEF, 0xBB, 0xBF][..])
-        .unwrap_or(window);
-    let text = String::from_utf8_lossy(window);
-    let mut lines = text.lines().map(|l| l.trim_end_matches('\r'));
-    matches!(lines.next(), Some("---")) && lines.any(|l| l == "---")
-}
-
 /// Deterministic local checks; every rule is a plain function of the skill
 /// directory contents.
 pub struct StaticAuditor;
 
 impl StaticAuditor {
     fn check_skill_md(&self, skill: &ResolvedSkill, findings: &mut Vec<Finding>) {
-        let warn = |message: String| Finding {
-            severity: Severity::Warn,
-            message,
-            location: Some("SKILL.md".to_string()),
-        };
         let Some(bytes) = read_capped(&skill.path.join("SKILL.md")) else {
-            findings.push(warn("cannot read SKILL.md".to_string()));
+            findings.push(Finding {
+                severity: Severity::Warn,
+                message: "cannot read SKILL.md".to_string(),
+                location: Some("SKILL.md".to_string()),
+            });
             return;
         };
-
-        // Frontmatter rules.
-        if !has_frontmatter(&bytes) {
-            findings.push(warn("SKILL.md has no frontmatter".to_string()));
-        } else {
-            let fm = frontmatter::parse_frontmatter(&bytes);
-            if fm.description.is_none() {
-                findings.push(warn("frontmatter has no 'description'".to_string()));
-            }
-            if let Some(name) = &fm.name
-                && name != skill.id.as_str()
-            {
-                findings.push(warn(format!(
-                    "frontmatter name '{name}' does not match the directory name '{}'",
-                    skill.id
-                )));
-            }
-        }
-
-        // Size cap.
-        let lines = String::from_utf8_lossy(&bytes).lines().count();
-        if lines > MAX_SKILL_MD_LINES {
-            findings.push(warn(format!(
-                "SKILL.md has {lines} lines (max {MAX_SKILL_MD_LINES})"
-            )));
+        for check in textcheck::skill_md_checks(&bytes, Some(skill.id.as_str())) {
+            findings.push(Finding {
+                severity: check.severity,
+                message: check.message,
+                location: Some("SKILL.md".to_string()),
+            });
         }
     }
 
@@ -187,28 +62,12 @@ impl StaticAuditor {
             let Some(bytes) = read_capped(&path) else {
                 continue;
             };
-            if is_binary(&bytes) {
-                continue;
-            }
-            let script = is_script(rel);
-            let text = String::from_utf8_lossy(&bytes);
-            // First match per (pattern, file) — enough to act on, no floods.
-            let mut hit = [false; DANGER_PATTERNS.len()];
-            for (line_no, line) in text.lines().enumerate() {
-                for (idx, regex) in compiled_patterns() {
-                    let pattern = &DANGER_PATTERNS[*idx];
-                    if hit[*idx] || (pattern.scripts_only && !script) {
-                        continue;
-                    }
-                    if regex.is_match(line) {
-                        hit[*idx] = true;
-                        findings.push(Finding {
-                            severity: pattern.severity,
-                            message: format!("{}: {}", pattern.id, pattern.message),
-                            location: Some(format!("{rel}:{}", line_no + 1)),
-                        });
-                    }
-                }
+            for check in textcheck::danger_checks(rel, &bytes) {
+                findings.push(Finding {
+                    severity: check.severity,
+                    message: check.message,
+                    location: Some(format!("{rel}:{}", check.line + 1)),
+                });
             }
         }
     }
@@ -267,11 +126,6 @@ mod tests {
 
     fn find<'a>(report: &'a AuditReport, needle: &str) -> Option<&'a Finding> {
         report.findings.iter().find(|f| f.message.contains(needle))
-    }
-
-    #[test]
-    fn all_danger_patterns_compile() {
-        assert_eq!(compiled_patterns().len(), DANGER_PATTERNS.len());
     }
 
     #[tokio::test]
