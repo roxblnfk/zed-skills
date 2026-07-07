@@ -13,7 +13,9 @@
 //!    lockfile staleness onto manifest spans.
 //!
 //! `SKILL.md` analysis reuses the [`skills_audit::textcheck`] rules over the
-//! buffer text — the same table the StaticAuditor applies during sync.
+//! buffer text — the same table the StaticAuditor applies during sync —
+//! plus the frontmatter validation in [`crate::fmcheck`] (duplicate keys,
+//! spec length limits, name format, bool/enum values).
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -116,6 +118,14 @@ pub fn analyze_skill_md(text: &str, dir_name: Option<&str>) -> Vec<Diagnostic> {
     let line_index = LineRanges::new(text);
     let mut diags = Vec::new();
     for check in skills_audit::skill_md_checks(text.as_bytes(), dir_name) {
+        diags.push(diag(
+            line_index.line(check.line),
+            severity_of(check.severity),
+            check.code,
+            check.message,
+        ));
+    }
+    for check in crate::fmcheck::frontmatter_checks(text) {
         diags.push(diag(
             line_index.line(check.line),
             severity_of(check.severity),
@@ -543,5 +553,30 @@ mod tests {
             Some(NumberOrString::String("name-mismatch".into()))
         );
         assert_eq!(diags[0].range.start.line, 1);
+    }
+
+    #[test]
+    fn skill_md_frontmatter_validation_is_wired() {
+        let text = "---\nname: s\ndescription: d\nname: s\n---\n";
+        let diags = analyze_skill_md(text, Some("s"));
+        assert_eq!(diags.len(), 1);
+        assert_eq!(
+            diags[0].code,
+            Some(NumberOrString::String("fm-duplicate".into()))
+        );
+        assert_eq!(diags[0].severity, Some(DiagnosticSeverity::WARNING));
+        assert_eq!(diags[0].range.start.line, 3);
+    }
+
+    #[test]
+    fn empty_description_yields_only_no_description() {
+        // Coherence: an empty `description:` is one problem, one diagnostic —
+        // the textcheck (`no-description`), never an fm-value on top.
+        let diags = analyze_skill_md("---\nname: s\ndescription:\n---\n", Some("s"));
+        assert_eq!(diags.len(), 1);
+        assert_eq!(
+            diags[0].code,
+            Some(NumberOrString::String("no-description".into()))
+        );
     }
 }

@@ -6,8 +6,9 @@
 //!   names, lockfile staleness, not-yet-fetched remotes) — cache-only, no
 //!   network, no writes.
 //! - `SKILL.md`: frontmatter + StaticAuditor findings over the buffer text,
-//!   plus frontmatter completion (known keys, bool/enum values, a bootstrap
-//!   `---` block snippet).
+//!   frontmatter validation (duplicate keys, spec length limits, name
+//!   format, bool/enum values — `fm-*` codes), plus frontmatter completion
+//!   (known keys, bool/enum values, a bootstrap `---` block snippet).
 //! - Code action "Run skills update" → `workspace/executeCommand`
 //!   `skills.update` runs the real pipeline in-process.
 //! - Source code action "skills: set up gutter tasks" → `skills.setupTasks`
@@ -18,6 +19,7 @@
 
 pub mod analysis;
 pub mod completion;
+pub mod fmcheck;
 pub mod offline;
 pub mod server;
 pub mod spanindex;

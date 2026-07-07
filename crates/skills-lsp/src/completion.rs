@@ -10,7 +10,9 @@
 //!   containing directory name for `name`, fixed values for enum-ish fields.
 //!
 //! The field table below is the single place to extend (like the
-//! danger-pattern table in skills-audit). Sources (2026-07-07):
+//! danger-pattern table in skills-audit); it is shared with the frontmatter
+//! validation in [`crate::fmcheck`] (value kinds double as validators,
+//! `max_len` carries the spec length limits). Sources (2026-07-07):
 //! - Agent Skills spec: <https://agentskills.io/specification>
 //! - Zed skills docs: <https://zed.dev/docs/ai/skills>
 //! - Claude Code skills reference: <https://code.claude.com/docs/en/skills>
@@ -53,6 +55,10 @@ pub struct FrontmatterField {
     /// Which ecosystem consumes the field: `common` (Agent Skills spec —
     /// read by both Zed and Claude Code), `zed, claude`, or `claude`.
     pub ecosystem: &'static str,
+    /// Maximum value length in characters (Unicode scalars), where the Agent
+    /// Skills spec defines one. Used by the frontmatter validation
+    /// ([`crate::fmcheck`]), not by completion.
+    pub max_len: Option<usize>,
 }
 
 pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
@@ -62,6 +68,7 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "Skill name: lowercase letters, digits and hyphens, max 64 chars; should match \
               the skill directory name (skills sync keys conflicts on the directory name).",
         ecosystem: "common",
+        max_len: Some(64),
     },
     FrontmatterField {
         key: "description",
@@ -69,12 +76,14 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "What the skill does and when to use it (max 1024 chars) — agents use this to \
               decide when to load the skill.",
         ecosystem: "common",
+        max_len: Some(1024),
     },
     FrontmatterField {
         key: "license",
         value: ValueKind::Text,
         doc: "License name or a reference to a bundled license file.",
         ecosystem: "common",
+        max_len: None,
     },
     FrontmatterField {
         key: "compatibility",
@@ -82,6 +91,7 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "Environment requirements (intended product, system packages, network access), \
               max 500 chars. Most skills do not need it.",
         ecosystem: "common",
+        max_len: Some(500),
     },
     FrontmatterField {
         key: "metadata",
@@ -89,6 +99,7 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "Arbitrary key-value map for extra properties. Nested YAML — the skills sync \
               frontmatter reader ignores non-flat values (harmless; read by other consumers).",
         ecosystem: "common",
+        max_len: None,
     },
     FrontmatterField {
         key: "allowed-tools",
@@ -96,6 +107,7 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "Tools the agent may use without asking while the skill is active \
               (space/comma-separated string or YAML list). Experimental in the spec.",
         ecosystem: "common",
+        max_len: None,
     },
     FrontmatterField {
         key: "disable-model-invocation",
@@ -103,6 +115,7 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "true prevents the agent from loading the skill autonomously — it stays \
               invocable manually via /name.",
         ecosystem: "zed, claude",
+        max_len: None,
     },
     FrontmatterField {
         key: "user-invocable",
@@ -110,6 +123,7 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "false hides the skill from the / menu (background knowledge the user should \
               not invoke directly). Default: true.",
         ecosystem: "claude",
+        max_len: None,
     },
     FrontmatterField {
         key: "when_to_use",
@@ -117,6 +131,7 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "Extra trigger context (phrases, example requests) appended to the description \
               in the skill listing.",
         ecosystem: "claude",
+        max_len: None,
     },
     FrontmatterField {
         key: "argument-hint",
@@ -124,6 +139,7 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "Autocomplete hint for expected arguments, e.g. [issue-number] or \
               [filename] [format].",
         ecosystem: "claude",
+        max_len: None,
     },
     FrontmatterField {
         key: "arguments",
@@ -131,6 +147,7 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "Named positional arguments for $name substitution in the skill body \
               (space-separated string or YAML list).",
         ecosystem: "claude",
+        max_len: None,
     },
     FrontmatterField {
         key: "disallowed-tools",
@@ -138,18 +155,21 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "Tools removed from the agent's pool while the skill is active \
               (space/comma-separated string or YAML list).",
         ecosystem: "claude",
+        max_len: None,
     },
     FrontmatterField {
         key: "model",
         value: ValueKind::Text,
         doc: "Model override while the skill is active (same values as /model, or 'inherit').",
         ecosystem: "claude",
+        max_len: None,
     },
     FrontmatterField {
         key: "effort",
         value: ValueKind::Enum(&["low", "medium", "high", "xhigh", "max"]),
         doc: "Effort-level override while the skill is active.",
         ecosystem: "claude",
+        max_len: None,
     },
     FrontmatterField {
         key: "context",
@@ -157,12 +177,14 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "'fork' runs the skill in an isolated subagent context (the body becomes the \
               subagent prompt).",
         ecosystem: "claude",
+        max_len: None,
     },
     FrontmatterField {
         key: "agent",
         value: ValueKind::Text,
         doc: "Subagent type to use when 'context: fork' is set.",
         ecosystem: "claude",
+        max_len: None,
     },
     FrontmatterField {
         key: "hooks",
@@ -170,6 +192,7 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "Hooks scoped to the skill's lifecycle. Nested YAML — the skills sync \
               frontmatter reader ignores non-flat values (harmless; read by other consumers).",
         ecosystem: "claude",
+        max_len: None,
     },
     FrontmatterField {
         key: "paths",
@@ -177,12 +200,14 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
         doc: "Glob patterns limiting when the skill auto-activates \
               (comma-separated string or YAML list).",
         ecosystem: "claude",
+        max_len: None,
     },
     FrontmatterField {
         key: "shell",
         value: ValueKind::Enum(&["bash", "powershell"]),
         doc: "Shell for inline shell blocks in the skill body: bash (default) or powershell.",
         ecosystem: "claude",
+        max_len: None,
     },
 ];
 

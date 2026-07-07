@@ -1,0 +1,42 @@
+---
+source: crates/skills-lsp/tests/lsp_skill_docs.rs
+expression: simplify(&diags)
+---
+[
+  {
+    "code": "fm-format",
+    "message": "frontmatter `name` '-Bad--Name' may only contain lowercase letters, digits and hyphens (Agent Skills spec)",
+    "range": "1:0-1:16",
+    "severity": "warning"
+  },
+  {
+    "code": "fm-length",
+    "message": "frontmatter `description` is 1025 characters (max 1024 per the Agent Skills spec)",
+    "range": "2:0-2:1039",
+    "severity": "warning"
+  },
+  {
+    "code": "fm-duplicate",
+    "message": "duplicate frontmatter key `name` (first set on line 2; the last value wins during skills sync)",
+    "range": "3:0-3:12",
+    "severity": "warning"
+  },
+  {
+    "code": "fm-length",
+    "message": "frontmatter `compatibility` is 501 characters (max 500 per the Agent Skills spec)",
+    "range": "4:0-4:517",
+    "severity": "warning"
+  },
+  {
+    "code": "fm-value",
+    "message": "frontmatter `disable-model-invocation` must be true or false (got 'yes')",
+    "range": "5:0-5:29",
+    "severity": "warning"
+  },
+  {
+    "code": "fm-value",
+    "message": "frontmatter `effort` must be one of low, medium, high, xhigh, max (got 'ultra')",
+    "range": "6:0-6:13",
+    "severity": "warning"
+  }
+]
