@@ -8,7 +8,8 @@
 //! - `SKILL.md`: frontmatter + StaticAuditor findings over the buffer text,
 //!   frontmatter validation (duplicate keys, spec length limits, name
 //!   format, bool/enum values — `fm-*` codes), plus frontmatter completion
-//!   (known keys, bool/enum values, a bootstrap `---` block snippet).
+//!   (known keys, bool/enum values, a bootstrap `---` block snippet) and
+//!   hover docs on known frontmatter keys.
 //! - Code action "Run skills update" → `workspace/executeCommand`
 //!   `skills.update` runs the real pipeline in-process.
 //! - Source code action "skills: set up gutter tasks" → `skills.setupTasks`
@@ -20,6 +21,7 @@
 pub mod analysis;
 pub mod completion;
 pub mod fmcheck;
+pub mod hover;
 pub mod offline;
 pub mod server;
 pub mod spanindex;

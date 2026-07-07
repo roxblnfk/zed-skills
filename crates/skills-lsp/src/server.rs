@@ -16,16 +16,16 @@ use tower_lsp_server::ls_types::{
     CodeActionProviderCapability, CodeActionResponse, Command, CompletionOptions, CompletionParams,
     CompletionResponse, Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, ExecuteCommandOptions,
-    ExecuteCommandParams, InitializeParams, InitializeResult, InitializedParams, MessageType,
-    NumberOrString, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Uri,
+    ExecuteCommandParams, Hover, HoverParams, HoverProviderCapability, InitializeParams,
+    InitializeResult, InitializedParams, MessageType, NumberOrString, ServerCapabilities,
+    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
 use skills_core::manifest::{MANIFEST_NAME, Manifest};
 
 use crate::watch::WatchHandle;
-use crate::{analysis, completion, tasks, update, watch};
+use crate::{analysis, completion, hover, tasks, update, watch};
 
 /// Debounce window for `didChange` bursts.
 const CHANGE_DEBOUNCE: Duration = Duration::from_millis(300);
@@ -384,6 +384,7 @@ impl LanguageServer for Backend {
                     ]),
                     ..CompletionOptions::default()
                 }),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: vec![UPDATE_COMMAND.to_string(), SETUP_TASKS_COMMAND.to_string()],
                     ..ExecuteCommandOptions::default()
@@ -513,6 +514,22 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
         Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let position = params.text_document_position_params.position;
+        let uri = params.text_document_position_params.text_document.uri;
+        // Frontmatter hover applies to SKILL.md buffers only — skills.json
+        // (and anything else) gets None.
+        let text = {
+            let docs = self.state.docs.lock().expect("state lock");
+            docs.get(&uri)
+                .and_then(|doc| (doc.kind == DocKind::SkillMd).then(|| doc.text.clone()))
+        };
+        let Some(text) = text else {
+            return Ok(None);
+        };
+        Ok(hover::hover(&text, position.line, position.character))
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {

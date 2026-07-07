@@ -1,0 +1,20 @@
+---
+source: crates/skills-lsp/tests/lsp_hover.rs
+expression: result
+---
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "**effort** _(enum: low | medium | high | xhigh | max)_ — Effort-level override while the skill is active.\n\nEcosystems: claude"
+  },
+  "range": {
+    "end": {
+      "character": 6,
+      "line": 3
+    },
+    "start": {
+      "character": 0,
+      "line": 3
+    }
+  }
+}
