@@ -215,9 +215,11 @@ async fn add_gitlab_subgroup_registers_and_syncs() {
         "{stdout}"
     );
 
-    // Manifest entry written (2-space indent, caret ref, host preserved).
+    // Manifest entry written (2-space indent, caret ref, host preserved);
+    // the freshly created file points at the published JSON Schema.
     let manifest = std::fs::read_to_string(project.path().join("skills.json")).unwrap();
     let doc: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    assert_eq!(doc["$schema"], skills_core::manifest::SCHEMA_URL);
     let entry = &doc["remote"][0];
     assert_eq!(entry["from"], "gitlab");
     assert_eq!(entry["package"], "org/group/project");
@@ -266,6 +268,8 @@ async fn add_with_explicit_ref_and_skill_filter() {
     let manifest = std::fs::read_to_string(project.path().join("skills.json")).unwrap();
     let doc: serde_json::Value = serde_json::from_str(&manifest).unwrap();
     assert_eq!(doc["target"], ".agents/skills");
+    // Existing manifests are never retrofitted with a $schema key.
+    assert!(doc.get("$schema").is_none());
     let entry = &doc["remote"][0];
     // Explicit user ref stored verbatim (no caret derivation).
     assert_eq!(entry["ref"], "main");

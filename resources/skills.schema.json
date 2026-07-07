@@ -1,6 +1,6 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://raw.githubusercontent.com/zed-skills/ai-skills/main/resources/skills.schema.json",
+    "$id": "https://raw.githubusercontent.com/roxblnfk/zed-skills/master/resources/skills.schema.json",
     "title": "skills.json",
     "description": "Project manifest for the `skills` CLI (schema v2). Unknown top-level keys are fatal.",
     "type": "object",

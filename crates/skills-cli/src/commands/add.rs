@@ -18,7 +18,7 @@ use std::sync::Arc;
 use serde_json::{Map, Value, json};
 
 use skills_core::domain::ProviderId;
-use skills_core::manifest::{MANIFEST_NAME, Manifest};
+use skills_core::manifest::{MANIFEST_NAME, Manifest, SCHEMA_URL};
 use skills_core::pipeline::ctx::CACHE_DIR;
 use skills_core::pipeline::scan::scan_vendor;
 use skills_core::traits::{Cache, Vendor};
@@ -155,7 +155,9 @@ fn upsert_manifest_entry(
             .map_err(|e| CliError::config(format!("cannot read {MANIFEST_NAME}: {e}")))?;
         serde_json::from_str(&raw).map_err(|e| CliError::config(format!("{MANIFEST_NAME}: {e}")))?
     } else {
-        json!({})
+        // Fresh manifest: point editors at the published JSON Schema
+        // (existing files are never retrofitted).
+        json!({ "$schema": SCHEMA_URL })
     };
     let Value::Object(root) = &mut doc else {
         return Err(CliError::config(format!(

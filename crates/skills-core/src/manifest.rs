@@ -16,6 +16,12 @@ use crate::paths::normalize_rel;
 pub const MANIFEST_NAME: &str = "skills.json";
 pub const DEFAULT_TARGET: &str = ".agents/skills";
 
+/// Canonical published URL of the manifest JSON Schema. Written as the
+/// `$schema` value into manifests created by `skills init` / `skills add`
+/// and pinned as the schema file's `$id` (see the schema-sync tests).
+pub const SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/roxblnfk/zed-skills/master/resources/skills.schema.json";
+
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Manifest {

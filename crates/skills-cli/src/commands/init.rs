@@ -1,12 +1,15 @@
 use std::path::Path;
 
-use skills_core::manifest::MANIFEST_NAME;
+use skills_core::manifest::{MANIFEST_NAME, SCHEMA_URL};
 use skills_core::pipeline::ctx::CACHE_DIR;
 
 use crate::CliError;
 
+/// Stub manifest; `__SCHEMA_URL__` is replaced with
+/// [`skills_core::manifest::SCHEMA_URL`] (editors with JSON Schema support
+/// pick completion/validation up from the inline `$schema`).
 const STUB: &str = r#"{
-    "$schema": "https://raw.githubusercontent.com/zed-skills/ai-skills/main/resources/skills.schema.json",
+    "$schema": "__SCHEMA_URL__",
     "target": ".agents/skills",
     "local": {
         "dir": []
@@ -21,7 +24,7 @@ pub fn run(cwd: &Path, force: bool) -> Result<(), CliError> {
             "{MANIFEST_NAME} already exists (use --force to overwrite)"
         )));
     }
-    std::fs::write(&path, STUB)
+    std::fs::write(&path, STUB.replace("__SCHEMA_URL__", SCHEMA_URL))
         .map_err(|e| CliError::config(format!("cannot write {MANIFEST_NAME}: {e}")))?;
     println!("Wrote {MANIFEST_NAME}");
     ensure_cache_gitignored(cwd)?;

@@ -23,8 +23,12 @@ fn init_works_in_empty_dir_without_composer_json() {
     let tmp = tempfile::tempdir().unwrap();
     skills_cmd(tmp.path()).arg("init").assert().success();
     let raw = std::fs::read_to_string(tmp.path().join("skills.json")).unwrap();
-    // The stub must be a valid manifest.
-    Manifest::parse(&raw).unwrap();
+    // The stub must be a valid manifest and point at the published schema.
+    let manifest = Manifest::parse(&raw).unwrap();
+    assert_eq!(
+        manifest.schema.as_deref(),
+        Some(skills_core::manifest::SCHEMA_URL)
+    );
     // The archive cache is gitignored from the start.
     let gitignore = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
     assert!(

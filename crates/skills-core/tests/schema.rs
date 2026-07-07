@@ -17,6 +17,14 @@ fn schema_is_valid_json_draft_2020_12() {
     assert_eq!(schema["additionalProperties"], false);
 }
 
+/// The schema's `$id` must be the canonical published URL — the same one
+/// `skills init` / `skills add` write into generated manifests.
+#[test]
+fn schema_id_is_the_published_url() {
+    let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
+    assert_eq!(schema["$id"], skills_core::manifest::SCHEMA_URL);
+}
+
 #[test]
 fn schema_top_level_properties_match_serde_model() {
     let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
