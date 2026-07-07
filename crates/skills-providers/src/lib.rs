@@ -31,4 +31,5 @@ pub use http::{HttpClient, HttpError, HttpResponse, MockHttp, ReqwestClient};
 pub use locate::{
     ComposerDeclaredLocator, DeclaredLocator, RecursiveFallbackLocator, WellKnownLocator,
 };
+pub use remote::normalize_host;
 pub use url::{UrlProvider, UrlVendor};

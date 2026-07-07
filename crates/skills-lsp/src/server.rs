@@ -15,17 +15,18 @@ use tower_lsp_server::ls_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CodeActionResponse, Command, CompletionOptions, CompletionParams,
     CompletionResponse, Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DidSaveTextDocumentParams, ExecuteCommandOptions,
-    ExecuteCommandParams, Hover, HoverParams, HoverProviderCapability, InitializeParams,
-    InitializeResult, InitializedParams, MessageType, NumberOrString, ServerCapabilities,
-    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentLink, DocumentLinkOptions,
+    DocumentLinkParams, ExecuteCommandOptions, ExecuteCommandParams, Hover, HoverParams,
+    HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, MessageType,
+    NumberOrString, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
+    TextDocumentSyncKind, Uri, WorkDoneProgressOptions,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
 use skills_core::manifest::{MANIFEST_NAME, Manifest};
 
 use crate::watch::WatchHandle;
-use crate::{analysis, completion, hover, tasks, update, watch};
+use crate::{analysis, completion, hover, links, tasks, update, watch};
 
 /// Debounce window for `didChange` bursts.
 const CHANGE_DEBOUNCE: Duration = Duration::from_millis(300);
@@ -385,6 +386,10 @@ impl LanguageServer for Backend {
                     ..CompletionOptions::default()
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                document_link_provider: Some(DocumentLinkOptions {
+                    resolve_provider: Some(false),
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                }),
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: vec![UPDATE_COMMAND.to_string(), SETUP_TASKS_COMMAND.to_string()],
                     ..ExecuteCommandOptions::default()
@@ -530,6 +535,22 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(hover::hover(&text, position.line, position.character))
+    }
+
+    async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
+        let uri = params.text_document.uri;
+        // Manifest buffers only; SKILL.md gets None.
+        let snapshot = {
+            let docs = self.state.docs.lock().expect("state lock");
+            docs.get(&uri).and_then(|doc| {
+                (doc.kind == DocKind::Manifest).then(|| (doc.path.clone(), doc.text.clone()))
+            })
+        };
+        let Some((path, text)) = snapshot else {
+            return Ok(None);
+        };
+        let root = path.parent().unwrap_or(Path::new("."));
+        Ok(Some(links::document_links(root, &text)))
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {

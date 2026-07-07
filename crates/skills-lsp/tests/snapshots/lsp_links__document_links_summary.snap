@@ -1,0 +1,22 @@
+---
+source: crates/skills-lsp/tests/lsp_links.rs
+expression: summary
+---
+[
+  {
+    "target": "<TMP>/skills-src",
+    "tooltip": "Open directory"
+  },
+  {
+    "target": "https://github.com/acme/skills",
+    "tooltip": "Open repository"
+  },
+  {
+    "target": "https://gitlab.com/org/group/sub/project",
+    "tooltip": "Open repository"
+  },
+  {
+    "target": "https://example.com/skills.zip",
+    "tooltip": "Open URL"
+  }
+]

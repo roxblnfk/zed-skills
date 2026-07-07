@@ -275,8 +275,10 @@ pub(crate) fn percent_encode(s: &str) -> String {
 }
 
 /// Normalize a declared host to `scheme://host` form: a bare host gets
-/// `https://`, trailing slashes are dropped.
-pub(crate) fn normalize_host(host: &str) -> String {
+/// `https://`, trailing slashes are dropped. Public because the LSP's
+/// document links build repo web URLs with the same host semantics the
+/// providers use for API bases.
+pub fn normalize_host(host: &str) -> String {
     let host = host.trim().trim_end_matches('/');
     if host.contains("://") {
         host.to_string()

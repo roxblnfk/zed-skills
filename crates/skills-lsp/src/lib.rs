@@ -10,6 +10,8 @@
 //!   format, bool/enum values — `fm-*` codes), plus frontmatter completion
 //!   (known keys, bool/enum values, a bootstrap `---` block snippet) and
 //!   hover docs on known frontmatter keys.
+//! - `skills.json` document links: `remote[]` packages → repo web URLs,
+//!   by-url entries → the URL, `local.dir` → the directory.
 //! - Code action "Run skills update" → `workspace/executeCommand`
 //!   `skills.update` runs the real pipeline in-process.
 //! - Source code action "skills: set up gutter tasks" → `skills.setupTasks`
@@ -22,6 +24,7 @@ pub mod analysis;
 pub mod completion;
 pub mod fmcheck;
 pub mod hover;
+pub mod links;
 pub mod offline;
 pub mod server;
 pub mod spanindex;
