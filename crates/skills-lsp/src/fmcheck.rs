@@ -10,7 +10,9 @@
 //! 1–64 chars, lowercase `a-z`/`0-9`/hyphens, no leading/trailing hyphen, no
 //! consecutive hyphens; `description` 1–1024 chars; `compatibility` 1–500
 //! chars. All findings are warnings — the sync-side reader never rejects a
-//! skill over its frontmatter.
+//! skill over its frontmatter. The name-format rules themselves live in
+//! [`skills_audit::name_format_error`] — the single implementation shared
+//! with the StaticAuditor's and the LSP's directory-name checks.
 //!
 //! Pure functions over the document text (no filesystem, no LSP types), so
 //! a future CLI StaticAuditor hookup is trivial. Frontmatter block/line
@@ -22,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use skills_audit::TextCheck;
+use skills_audit::{TextCheck, name_format_error};
 use skills_core::audit::Severity;
 use skills_core::frontmatter::{FlatEntry, flat_entries};
 
@@ -143,25 +145,6 @@ fn field_checks(field: &FrontmatterField, entry: &FlatEntry, checks: &mut Vec<Te
         }
         ValueKind::Text | ValueKind::List | ValueKind::Map => {}
     }
-}
-
-/// First violated Agent Skills spec rule for a (non-empty) skill name, if
-/// any: lowercase `a-z`/`0-9`/hyphens only, no leading/trailing hyphen, no
-/// consecutive hyphens.
-fn name_format_error(name: &str) -> Option<&'static str> {
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-    {
-        return Some("may only contain lowercase letters, digits and hyphens (Agent Skills spec)");
-    }
-    if name.starts_with('-') || name.ends_with('-') {
-        return Some("must not start or end with a hyphen (Agent Skills spec)");
-    }
-    if name.contains("--") {
-        return Some("must not contain consecutive hyphens (Agent Skills spec)");
-    }
-    None
 }
 
 fn warn(code: &'static str, message: String, line: usize) -> TextCheck {
@@ -314,6 +297,40 @@ mod tests {
             assert_eq!(hit.line, 1);
             assert!(hit.message.contains(reason), "'{bad}': {}", hit.message);
         }
+    }
+
+    #[test]
+    fn name_rules_shared_with_dir_name_checker_agree() {
+        // Parity pin: the frontmatter `name:` path (fm-format) and the
+        // directory-name path (StaticAuditor / LSP dir-format) go through
+        // the same skills-audit implementation — same verdict per name.
+        for name in [
+            "pdf-processing",
+            "a",
+            "42",
+            "PDF-Processing",
+            "under_score",
+            "with space",
+            "café",
+            "-pdf",
+            "pdf-",
+            "pdf--processing",
+        ] {
+            let via_fm = checks(&format!("---\nname: {name}\n---\n"))
+                .iter()
+                .any(|c| c.code == codes::FORMAT);
+            let via_dir = skills_audit::dir_name_spec_error(name).is_some();
+            assert_eq!(via_fm, via_dir, "verdicts diverge for '{name}'");
+        }
+        // Over-length: fm path reports fm-length (via the field table), dir
+        // path folds the same 64-char cap into its single verdict.
+        let long = "a".repeat(65);
+        assert!(
+            checks(&format!("---\nname: {long}\n---\n"))
+                .iter()
+                .any(|c| c.code == codes::LENGTH)
+        );
+        assert!(skills_audit::dir_name_spec_error(&long).is_some());
     }
 
     #[test]

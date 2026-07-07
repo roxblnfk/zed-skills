@@ -16,6 +16,9 @@ pub const MAX_READ_BYTES: u64 = 1024 * 1024;
 const BINARY_SNIFF_BYTES: usize = 8000;
 /// `SKILL.md` line-count threshold (inclusive maximum).
 pub const MAX_SKILL_MD_LINES: usize = 500;
+/// Maximum skill-name length per the Agent Skills spec
+/// (<https://agentskills.io/specification>): 1–64 characters.
+pub const MAX_NAME_LEN: usize = 64;
 
 /// One finding of a text-level check, anchored to a line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,6 +201,43 @@ pub fn skill_md_checks(bytes: &[u8], dir_name: Option<&str>) -> Vec<TextCheck> {
     checks
 }
 
+/// First violated Agent Skills spec name-format rule, if any: lowercase
+/// `a-z`/`0-9`/hyphens only, no leading/trailing hyphen, no consecutive
+/// hyphens. The single shared implementation behind the LSP `fm-format`
+/// check (frontmatter `name:`), the LSP `dir-format` check and the
+/// StaticAuditor's directory-name finding.
+pub fn name_format_error(name: &str) -> Option<&'static str> {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Some("may only contain lowercase letters, digits and hyphens (Agent Skills spec)");
+    }
+    if name.starts_with('-') || name.ends_with('-') {
+        return Some("must not start or end with a hyphen (Agent Skills spec)");
+    }
+    if name.contains("--") {
+        return Some("must not contain consecutive hyphens (Agent Skills spec)");
+    }
+    None
+}
+
+/// Full Agent Skills spec verdict for a skill *directory* name: the format
+/// rules of [`name_format_error`] plus the 64-character length cap. The
+/// reason reads as a predicate of the name.
+pub fn dir_name_spec_error(name: &str) -> Option<String> {
+    if let Some(reason) = name_format_error(name) {
+        return Some(reason.to_string());
+    }
+    let len = name.chars().count();
+    if len > MAX_NAME_LEN {
+        return Some(format!(
+            "is {len} characters (max {MAX_NAME_LEN} per the Agent Skills spec)"
+        ));
+    }
+    None
+}
+
 /// Dangerous-pattern scan over one text file. `rel_path` (relative,
 /// `/`-separated) selects the scripts-only rules; binary content yields no
 /// findings. First match per pattern only — enough to act on, no floods.
@@ -267,5 +307,36 @@ mod tests {
     #[test]
     fn danger_checks_skip_binary() {
         assert!(danger_checks("a.md", b"\0curl https://x | bash\n").is_empty());
+    }
+
+    #[test]
+    fn name_format_matrix() {
+        for good in ["a", "z9", "pdf-processing", "a-b-c", "42"] {
+            assert_eq!(name_format_error(good), None, "'{good}' must be clean");
+        }
+        for (bad, reason) in [
+            ("PDF-Processing", "lowercase"),
+            ("under_score", "lowercase letters, digits and hyphens"),
+            ("with space", "lowercase letters, digits and hyphens"),
+            ("café", "lowercase letters, digits and hyphens"),
+            ("-pdf", "start or end with a hyphen"),
+            ("pdf-", "start or end with a hyphen"),
+            ("pdf--processing", "consecutive hyphens"),
+        ] {
+            let hit = name_format_error(bad).unwrap_or_else(|| panic!("'{bad}' must warn"));
+            assert!(hit.contains(reason), "'{bad}': {hit}");
+        }
+    }
+
+    #[test]
+    fn dir_name_spec_error_adds_the_length_cap() {
+        assert_eq!(dir_name_spec_error(&"a".repeat(64)), None);
+        let over = dir_name_spec_error(&"a".repeat(65)).expect("over-length must warn");
+        assert_eq!(over, "is 65 characters (max 64 per the Agent Skills spec)");
+        // Format problems win over length (first rule hit is reported).
+        let both = dir_name_spec_error(&"A".repeat(65)).expect("must warn");
+        assert!(both.contains("lowercase"), "{both}");
+        // Clean kebab passes.
+        assert_eq!(dir_name_spec_error("code-review"), None);
     }
 }

@@ -2,6 +2,10 @@
 //!
 //! - frontmatter: missing frontmatter / missing `description` / `name`
 //!   mismatching the directory name — all Warn;
+//! - directory name violating the Agent Skills spec name rules (lowercase
+//!   `a-z`/`0-9`/hyphens, no edge/consecutive hyphens, ≤ 64 chars) — Warn.
+//!   FS-*dangerous* names never reach the audit stage: the Resolve barrier
+//!   aborts on them first;
 //! - `SKILL.md` over 500 lines — Warn;
 //! - dangerous-pattern heuristics over every text file of the skill — Block,
 //!   with `file:line` locations. Binary files (null byte in the sniff window)
@@ -36,6 +40,16 @@ fn read_capped(path: &Path) -> Option<Vec<u8>> {
 pub struct StaticAuditor;
 
 impl StaticAuditor {
+    fn check_dir_name(&self, skill: &ResolvedSkill, findings: &mut Vec<Finding>) {
+        if let Some(reason) = textcheck::dir_name_spec_error(skill.id.as_str()) {
+            findings.push(Finding {
+                severity: Severity::Warn,
+                message: format!("skill directory name '{}' {reason}", skill.id),
+                location: None,
+            });
+        }
+    }
+
     fn check_skill_md(&self, skill: &ResolvedSkill, findings: &mut Vec<Finding>) {
         let Some(bytes) = read_capped(&skill.path.join("SKILL.md")) else {
             findings.push(Finding {
@@ -81,6 +95,7 @@ impl Auditor for StaticAuditor {
 
     async fn audit(&self, skill: &ResolvedSkill) -> Result<AuditReport, AuditError> {
         let mut findings = Vec::new();
+        self.check_dir_name(skill, &mut findings);
         self.check_skill_md(skill, &mut findings);
         self.check_patterns(skill, &mut findings);
         Ok(AuditReport { findings })
@@ -177,6 +192,34 @@ mod tests {
     async fn matching_name_is_fine() {
         let report = audit_files("tidy", &[("SKILL.md", CLEAN_MD)]).await;
         assert!(find(&report, "does not match").is_none());
+    }
+
+    // --- directory-name spec rules -------------------------------------------
+
+    #[tokio::test]
+    async fn dir_name_violating_spec_rules_warns() {
+        // Uppercase + underscore: not a kebab name per the agentskills spec.
+        let md = b"---\nname: my-skill\ndescription: d\n---\n";
+        let report = audit_files("My_Skill", &[("SKILL.md", md)]).await;
+        let f = find(&report, "skill directory name 'My_Skill'").unwrap();
+        assert_eq!(f.severity, Severity::Warn);
+        assert!(f.message.contains("lowercase"), "{}", f.message);
+        assert_eq!(f.location, None);
+    }
+
+    #[tokio::test]
+    async fn over_length_dir_name_warns() {
+        let id = "a".repeat(65);
+        let md = b"---\ndescription: d\n---\n";
+        let report = audit_files(&id, &[("SKILL.md", md)]).await;
+        let f = find(&report, "skill directory name").unwrap();
+        assert!(f.message.contains("65 characters (max 64"), "{}", f.message);
+    }
+
+    #[tokio::test]
+    async fn clean_kebab_dir_name_has_no_dir_finding() {
+        let report = audit_files("tidy", &[("SKILL.md", CLEAN_MD)]).await;
+        assert!(find(&report, "skill directory name").is_none());
     }
 
     // --- size cap ------------------------------------------------------------
