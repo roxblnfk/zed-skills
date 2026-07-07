@@ -13,7 +13,8 @@ What it provides:
 - **Runnables & tasks**: ▶ gutter buttons in `skills.json` for whole-manifest and per-vendor
   sync, plus `skills: update` / `skills: update --dry-run` / `skills: check` in the
   `task: spawn` palette.
-  See [Runnables & tasks](#runnables--tasks) — including an important note about `skills` on PATH.
+  See [Runnables & tasks](#runnables--tasks) — including how to make the tasks run the
+  extension's own binary instead of `skills` from PATH (a one-click code action).
 
 The server starts when a `skills.json`, `skills.lock`, or `SKILL.md` file is opened in a trusted
 worktree.
@@ -81,46 +82,34 @@ Runnable tags (for wiring up your own tasks): `skills-sync-vendor` (per-entry, p
 `$ZED_CUSTOM_SKILLS_PACKAGE`), `skills-sync` (whole manifest) and `skills-check` (the
 `--check` task).
 
-### Automatic sync check on worktree creation
+### Which binary do the tasks run?
 
-Zed task templates support `"hooks": ["create_worktree"]` — the task runs automatically after
-Zed creates a new **linked Git worktree** (the `git: create worktree` flow). Hooks are honored
-**only for tasks from `.zed/tasks.json` or your global tasks.json** — Zed collects hook tasks
-from file-based task settings exclusively, so the extension cannot ship this behavior in its
-bundled tasks. To get an automatic `skills update --check` in every fresh worktree, add to
-`.zed/tasks.json`:
+The *bundled* tasks run in your terminal and invoke whatever `skills` resolves to in PATH —
+unlike the language server, which downloads its own binary. If you don't have this project's
+CLI in PATH (or a *different* utility named `skills` shadows it, e.g. the PHP
+[`llm/skills`](https://github.com/roxblnfk/skills) Composer plugin), the ▶ tasks fail or run
+the wrong tool.
 
-```json
-[
-  {
-    "label": "skills: check",
-    "command": "skills",
-    "args": ["update", "--check"],
-    "cwd": "$ZED_WORKTREE_ROOT",
-    "hooks": ["create_worktree"],
-    "reveal": "no_focus",
-    "hide": "on_success",
-    "tags": ["skills-check"]
-  }
-]
-```
+**Recommended fix — zero install:** open `skills.json` and run the code action
+**skills: set up gutter tasks (.zed/tasks.json)** (cursor anywhere in the file →
+`editor: toggle code actions`). It writes the same four tasks into your project's
+`.zed/tasks.json` with `command` set to the language server's own binary — no Rust toolchain
+or CLI install needed. Worktree tasks with the same tags replace the bundled ones in the ▶
+menu, so the gutter buttons just start working.
 
-`hide: "on_success"` closes the terminal tab when everything is in sync (exit 0); an
-out-of-sync tree exits 5, so the tab stays open showing what would change and the
-`run 'skills update' to apply` hint. Note the hook fires on linked-worktree creation, not on
-every workspace open — for an on-demand check use the bundled **skills: check** palette task.
+How the generated file is managed:
 
-> **Important — tasks use `skills` from PATH.** Unlike the language server (which downloads its
-> own binary), tasks run in your terminal and invoke whatever `skills` resolves to in PATH. If
-> you have a *different* utility named `skills` (e.g. the PHP
-> [`llm/skills`](https://github.com/roxblnfk/skills) Composer plugin), the tasks will run that
-> instead. This bites the `--check` task and the `create_worktree` hook above especially hard:
-> the PHP tool's `update` command has **no `--check` option**, so the hook would print an
-> unknown-option error in a terminal tab on *every worktree creation* until you apply the
-> override below (use the full path to this project's binary in the hook task too). To point
-> the tasks at a specific binary, define project tasks in `.zed/tasks.json` with the **same
-> tags** — worktree tasks take precedence over the extension's bundled ones and replace them
-> in the ▶ menu. Ready-made Windows example:
+- Entries carrying a `skills-*` tag are owned by the generator: rerunning the action refreshes
+  them, and on every server start stale binary paths (a pruned versioned extension download)
+  are silently repointed at the current binary — so the file survives extension updates.
+- Extra fields you add to those entries (`"hooks"`, `"reveal"`, `"hide"`, …) are preserved on
+  refresh; if you replace an entry's `command` with your own existing binary, the generator
+  leaves the whole entry alone.
+- Your other tasks and comments in the file are never touched. The action refuses to rewrite
+  (with an explanatory message) rather than ever lose content.
+
+**Manual alternative:** define the tasks yourself in `.zed/tasks.json` with the **same tags**
+and the full path to any `skills` binary, e.g. on Windows:
 
 ```json
 [
@@ -156,6 +145,46 @@ every workspace open — for an on-demand check use the bundled **skills: check*
 ```
 
 On macOS/Linux replace the command with the binary's path (e.g. `~/.local/bin/skills`).
+Note: pointing an entry at a custom binary makes it yours — the code action and the startup
+reconciliation will not touch it as long as that binary exists.
+
+### Automatic sync check on worktree creation
+
+Zed task templates support `"hooks": ["create_worktree"]` — the task runs automatically after
+Zed creates a new **linked Git worktree** (the `git: create worktree` flow). Hooks are honored
+**only for tasks from `.zed/tasks.json` or your global tasks.json** — Zed collects hook tasks
+from file-based task settings exclusively, so the extension cannot ship this behavior in its
+bundled tasks.
+
+Easiest path: run the [code action](#which-binary-do-the-tasks-run) first, then add
+`"hooks": ["create_worktree"]`, `"reveal": "no_focus"` and `"hide": "on_success"` to the
+generated **skills: check** entry — the generator preserves those extra fields when it
+refreshes the entry. Writing the task by hand works too:
+
+```json
+[
+  {
+    "label": "skills: check",
+    "command": "skills",
+    "args": ["update", "--check"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "hooks": ["create_worktree"],
+    "reveal": "no_focus",
+    "hide": "on_success",
+    "tags": ["skills-check"]
+  }
+]
+```
+
+`hide: "on_success"` closes the terminal tab when everything is in sync (exit 0); an
+out-of-sync tree exits 5, so the tab stays open showing what would change and the
+`run 'skills update' to apply` hint. Note the hook fires on linked-worktree creation, not on
+every workspace open — for an on-demand check use the bundled **skills: check** palette task.
+
+> **Careful with `"command": "skills"` in a hook task**: it resolves from PATH, and the PHP
+> `llm/skills` tool's `update` command has **no `--check` option** — the hook would print an
+> unknown-option error on *every worktree creation*. Prefer the code action (absolute path to
+> the extension's binary) or a full path.
 
 ## Developing / installing as a dev extension
 
