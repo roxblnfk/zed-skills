@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.1](https://github.com/roxblnfk/zed-skills/compare/v0.3.0...v0.3.1) (2026-07-07)
+
+
+### Features
+
+* **audit:** share the agentskills name rules and warn on bad skill dir names ([2aec356](https://github.com/roxblnfk/zed-skills/commit/2aec356eea4a7060d95bdb6fa7aed0eece965448))
+* **core:** abort on FS-dangerous skill dir names, normalize the conflict key ([74102d5](https://github.com/roxblnfk/zed-skills/commit/74102d5d929f42a732426a1d0b9f1c9c3f2081e4))
+* **lsp:** document links in skills.json ([c6ef5c6](https://github.com/roxblnfk/zed-skills/commit/c6ef5c663674e80ee8ab816672d761cc7187773e))
+* **lsp:** hover docs on SKILL.md frontmatter keys ([d687514](https://github.com/roxblnfk/zed-skills/commit/d687514642dc91f3a6b16aad54e0b5d3445eee15))
+
 ## [0.3.0](https://github.com/roxblnfk/zed-skills/compare/v0.2.0...v0.3.0) (2026-07-07)
 
 
