@@ -673,9 +673,37 @@ mod tests {
     fn clean_dir_name_and_absent_dir_name_yield_no_dir_diags() {
         let text = "---\nname: tidy\ndescription: d\n---\n";
         assert!(analyze_skill_md(text, Some("tidy")).is_empty());
-        // Unknown dir name (no URI context): nothing to check.
-        let text = "---\ndescription: d\n---\n";
+        // Unknown dir name (no URI context): no dir-format/dir-danger diags.
+        // (A complete, spec-clean frontmatter still yields nothing.)
+        let text = "---\nname: tidy\ndescription: d\n---\n";
         assert!(analyze_skill_md(text, None).is_empty());
+    }
+
+    #[test]
+    fn missing_name_is_one_no_name_never_fm_value() {
+        // Coherence: an absent `name:` key is the textcheck `no-name` Warn and
+        // nothing else — no fm-value nudge (that is for an *empty* value) and
+        // no name-mismatch (there is no name to mismatch).
+        let codes = |text: &str| -> Vec<String> {
+            analyze_skill_md(text, Some("dir"))
+                .iter()
+                .filter_map(|d| match &d.code {
+                    Some(NumberOrString::String(s)) => Some(s.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let c = codes("---\ndescription: d\n---\n");
+        assert!(c.contains(&"no-name".to_string()), "{c:?}");
+        assert!(
+            !c.iter().any(|s| s == "fm-value" || s == "name-mismatch"),
+            "{c:?}"
+        );
+
+        // An empty `name:` is the *opposite* case: fm-value nudge, no no-name.
+        let c = codes("---\nname:\ndescription: d\n---\n");
+        assert!(c.contains(&"fm-value".to_string()), "{c:?}");
+        assert!(!c.contains(&"no-name".to_string()), "{c:?}");
     }
 
     #[test]

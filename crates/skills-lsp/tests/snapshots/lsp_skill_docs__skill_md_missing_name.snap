@@ -1,0 +1,12 @@
+---
+source: crates/skills-lsp/tests/lsp_skill_docs.rs
+expression: simplify(&diags)
+---
+[
+  {
+    "code": "no-name",
+    "message": "frontmatter has no 'name' (required by the Agent Skills spec) — skills sync falls back to the directory name",
+    "range": "0:0-0:3",
+    "severity": "warning"
+  }
+]

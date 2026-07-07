@@ -1,7 +1,7 @@
 //! `StaticAuditor` — deterministic local checks (SPEC §9), no network:
 //!
-//! - frontmatter: missing frontmatter / missing `description` / `name`
-//!   mismatching the directory name — all Warn;
+//! - frontmatter: missing frontmatter / missing required `name` / missing
+//!   `description` / `name` mismatching the directory name — all Warn;
 //! - directory name violating the Agent Skills spec name rules (lowercase
 //!   `a-z`/`0-9`/hyphens, no edge/consecutive hyphens, ≤ 64 chars) — Warn.
 //!   FS-*dangerous* names never reach the audit stage: the Resolve barrier
@@ -165,6 +165,24 @@ mod tests {
     async fn unclosed_frontmatter_counts_as_missing() {
         let report = audit_files("s", &[("SKILL.md", b"---\nname: s\n")]).await;
         assert!(find(&report, "no frontmatter").is_some());
+    }
+
+    #[tokio::test]
+    async fn missing_name_key_warns() {
+        // Frontmatter with a description but no `name:` line — the spec
+        // requires `name`; sync falls back to the directory name.
+        let report = audit_files("s", &[("SKILL.md", b"---\ndescription: d\n---\nbody\n")]).await;
+        let f = find(&report, "no 'name'").unwrap();
+        assert_eq!(f.severity, Severity::Warn);
+        assert_eq!(f.location.as_deref(), Some("SKILL.md"));
+        assert!(f.message.contains("directory name"), "{}", f.message);
+    }
+
+    #[tokio::test]
+    async fn present_name_has_no_missing_name_finding() {
+        let report =
+            audit_files("s", &[("SKILL.md", b"---\nname: s\ndescription: d\n---\n")]).await;
+        assert!(find(&report, "no 'name'").is_none());
     }
 
     #[tokio::test]

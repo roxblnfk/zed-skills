@@ -65,16 +65,17 @@ pub const FRONTMATTER_FIELDS: &[FrontmatterField] = &[
     FrontmatterField {
         key: "name",
         value: ValueKind::SkillName,
-        doc: "Skill name: lowercase letters, digits and hyphens, max 64 chars; should match \
-              the skill directory name (skills sync keys conflicts on the directory name).",
+        doc: "Required. Skill name: lowercase letters, digits and hyphens, max 64 chars; should \
+              match the skill directory name (skills sync keys conflicts on the directory name, \
+              and falls back to it when name is absent).",
         ecosystem: "common",
         max_len: Some(64),
     },
     FrontmatterField {
         key: "description",
         value: ValueKind::Text,
-        doc: "What the skill does and when to use it (max 1024 chars) — agents use this to \
-              decide when to load the skill.",
+        doc: "Required. What the skill does and when to use it (max 1024 chars) — agents use \
+              this to decide when to load the skill.",
         ecosystem: "common",
         max_len: Some(1024),
     },

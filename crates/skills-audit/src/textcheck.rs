@@ -171,6 +171,22 @@ pub fn skill_md_checks(bytes: &[u8], dir_name: Option<&str>) -> Vec<TextCheck> {
         ));
     } else {
         let fm = frontmatter::parse_frontmatter(bytes);
+        // The Agent Skills spec makes `name` required. An absent `name:` key
+        // (the reader silently falls back to the directory name) is worth a
+        // nudge — distinct from an *empty* `name:` value, which is a present
+        // key the LSP flags via its fm-value nudge (never doubled here).
+        let has_name_key = frontmatter::flat_entries(bytes)
+            .iter()
+            .any(|entry| entry.key == "name");
+        if !has_name_key {
+            checks.push(warn(
+                "no-name",
+                "frontmatter has no 'name' (required by the Agent Skills spec) — \
+                 skills sync falls back to the directory name"
+                    .to_string(),
+                0,
+            ));
+        }
         if fm.description.is_none() {
             checks.push(warn(
                 "no-description",
@@ -293,6 +309,48 @@ mod tests {
         let checks = skill_md_checks(b"# no frontmatter\n", Some("s"));
         assert_eq!(checks[0].code, "no-frontmatter");
         assert_eq!(checks[0].line, 0);
+    }
+
+    #[test]
+    fn missing_name_key_warns_but_present_or_empty_name_does_not() {
+        let codes = |md: &[u8]| -> Vec<&'static str> {
+            skill_md_checks(md, Some("dir"))
+                .iter()
+                .map(|c| c.code)
+                .collect()
+        };
+
+        // Frontmatter present, no `name:` line at all → no-name Warn (line 0).
+        let md = b"---\ndescription: d\n---\nbody\n";
+        let checks = skill_md_checks(md, Some("dir"));
+        let n = checks
+            .iter()
+            .find(|c| c.code == "no-name")
+            .expect("missing name must warn");
+        assert_eq!(n.severity, Severity::Warn);
+        assert_eq!(n.line, 0);
+        assert!(n.message.contains("directory name"), "{}", n.message);
+
+        // Present `name:` → no no-name.
+        assert!(!codes(b"---\nname: dir\ndescription: d\n---\n").contains(&"no-name"));
+
+        // Empty `name:` is a *present* key → no no-name here (the LSP fm-value
+        // nudge owns the empty case; absent key != empty value).
+        assert!(!codes(b"---\nname:\ndescription: d\n---\n").contains(&"no-name"));
+
+        // Block-scalar `name:` is also a present key → no no-name.
+        assert!(!codes(b"---\nname: |\n  multi\ndescription: d\n---\n").contains(&"no-name"));
+
+        // A missing frontmatter block yields its single no-frontmatter Warn,
+        // never no-name.
+        assert_eq!(codes(b"# no frontmatter\n"), ["no-frontmatter"]);
+
+        // name and description both absent → both required-field warnings.
+        let both = codes(b"---\nlicense: x\n---\n");
+        assert!(
+            both.contains(&"no-name") && both.contains(&"no-description"),
+            "{both:?}"
+        );
     }
 
     #[test]

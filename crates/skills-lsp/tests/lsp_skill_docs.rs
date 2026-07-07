@@ -118,6 +118,31 @@ async fn dangerous_dir_name_is_an_error() {
     insta::assert_json_snapshot!("skill_md_dir_danger", simplify(&diags));
 }
 
+/// Frontmatter present but with no `name:` line → the shared `no-name`
+/// warning (the Agent Skills spec makes `name` required; skills sync falls
+/// back to the directory name). The dir name and description are both clean,
+/// so `no-name` is the only diagnostic.
+#[tokio::test(flavor = "multi_thread")]
+async fn missing_name_key_warns() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp
+        .path()
+        .join(".agents")
+        .join("skills")
+        .join("deploy")
+        .join("SKILL.md");
+    let text = "---\ndescription: Deploys things.\n---\n# Deploy\n";
+    write_file(&path, text);
+    write_file(&tmp.path().join("skills.json"), "{}");
+
+    let mut client = TestClient::start();
+    client.initialize(Some(tmp.path())).await;
+    let uri = uri_string(&path);
+    client.did_open(&uri, "markdown", text).await;
+    let diags = client.wait_diagnostics(&uri).await;
+    insta::assert_json_snapshot!("skill_md_missing_name", simplify(&diags));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn clean_skill_md_has_no_diagnostics() {
     let tmp = tempfile::tempdir().unwrap();
