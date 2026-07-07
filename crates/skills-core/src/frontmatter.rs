@@ -35,24 +35,69 @@ pub fn read_frontmatter(skill_md: &Path) -> Frontmatter {
 }
 
 /// Parse frontmatter from raw bytes (only the first [`READ_CAP`] bytes are
-/// considered).
+/// considered). Later occurrences of a key overwrite earlier ones (the last
+/// non-absent value wins).
 pub fn parse_frontmatter(bytes: &[u8]) -> Frontmatter {
+    let mut fm = Frontmatter::default();
+    for entry in flat_entries(bytes) {
+        if entry.is_absent() {
+            continue;
+        }
+        match entry.key.as_str() {
+            "name" => fm.name = Some(entry.value),
+            "description" => fm.description = Some(entry.value),
+            _ => {}
+        }
+    }
+    fm
+}
+
+/// One flat `key: value` frontmatter line as the best-effort reader sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatEntry {
+    /// The key, right-trimmed (ASCII alphanumerics, `_`, `-` only).
+    pub key: String,
+    /// The value, trimmed with one layer of surrounding quotes stripped.
+    /// May be empty — check [`FlatEntry::is_absent`] for the reader's view.
+    pub value: String,
+    /// 0-based line index in the document (line 0 is the opening `---`).
+    pub line: usize,
+}
+
+impl FlatEntry {
+    /// Whether the sync-side reader treats this value as absent: empty, or a
+    /// YAML block-scalar indicator (multiline values are unsupported).
+    pub fn is_absent(&self) -> bool {
+        self.value.is_empty()
+            || matches!(self.value.as_str(), "|" | "|-" | "|+" | ">" | ">-" | ">+")
+    }
+}
+
+/// All flat `key: value` lines of the frontmatter block, in document order,
+/// with 0-based line numbers. This is the single definition of the reader's
+/// line rules ([`parse_frontmatter`] is built on it): first [`READ_CAP`]
+/// bytes, BOM stripped, opening `---` at byte 0, closing `---` required
+/// inside the window (otherwise: no frontmatter, empty result), indented
+/// lines / missing colons / malformed keys skipped. Unlike
+/// [`parse_frontmatter`], absent values (empty, block-scalar indicators) are
+/// *included* — callers doing validation need to see them.
+pub fn flat_entries(bytes: &[u8]) -> Vec<FlatEntry> {
     let mut window = &bytes[..bytes.len().min(READ_CAP)];
     if window.starts_with(BOM) {
         window = &window[BOM.len()..];
     }
     let text = String::from_utf8_lossy(window);
-    let mut lines = text.lines();
+    let mut lines = text.lines().enumerate();
 
     // Frontmatter must start at byte 0.
     match lines.next() {
-        Some(first) if first.trim_end_matches('\r') == "---" => {}
-        _ => return Frontmatter::default(),
+        Some((_, first)) if first.trim_end_matches('\r') == "---" => {}
+        _ => return Vec::new(),
     }
 
-    let mut fm = Frontmatter::default();
+    let mut entries = Vec::new();
     let mut closed = false;
-    for line in lines {
+    for (line_no, line) in lines {
         let line = line.trim_end_matches('\r');
         if line == "---" {
             closed = true;
@@ -73,24 +118,18 @@ pub fn parse_frontmatter(bytes: &[u8]) -> Frontmatter {
         {
             continue;
         }
-        let value = strip_quotes(value.trim());
-        // YAML block-scalar indicators would start a multiline value, which
-        // this reader does not support — treat as absent.
-        if value.is_empty() || matches!(value, "|" | "|-" | "|+" | ">" | ">-" | ">+") {
-            continue;
-        }
-        match key {
-            "name" => fm.name = Some(value.to_string()),
-            "description" => fm.description = Some(value.to_string()),
-            _ => {}
-        }
+        entries.push(FlatEntry {
+            key: key.to_string(),
+            value: strip_quotes(value.trim()).to_string(),
+            line: line_no,
+        });
     }
 
     // No closing delimiter inside the window: not frontmatter.
     if !closed {
-        return Frontmatter::default();
+        return Vec::new();
     }
-    fm
+    entries
 }
 
 /// Strip exactly one layer of matching surrounding quotes.
@@ -230,6 +269,58 @@ mod tests {
     fn empty_input() {
         assert_eq!(parse(""), Frontmatter::default());
         assert_eq!(parse("---"), Frontmatter::default());
+    }
+
+    #[test]
+    fn duplicate_key_last_value_wins() {
+        // Pins the reader's overwrite semantics (LSP duplicate-key
+        // diagnostics reference this behavior in their message).
+        let fm = parse("---\nname: first\nname: second\n---\n");
+        assert_eq!(fm.name.as_deref(), Some("second"));
+        // …but an absent (empty) later value does not override.
+        let fm = parse("---\nname: first\nname:\n---\n");
+        assert_eq!(fm.name.as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn flat_entries_report_lines_and_absent_values() {
+        let entries = flat_entries(b"---\nname: x\n\ndescription:\nmeta:\n  nested: v\n---\n");
+        assert_eq!(
+            entries,
+            vec![
+                FlatEntry {
+                    key: "name".into(),
+                    value: "x".into(),
+                    line: 1,
+                },
+                FlatEntry {
+                    key: "description".into(),
+                    value: String::new(),
+                    line: 3,
+                },
+                FlatEntry {
+                    key: "meta".into(),
+                    value: String::new(),
+                    line: 4,
+                },
+            ]
+        );
+        assert!(!entries[0].is_absent());
+        assert!(entries[1].is_absent());
+    }
+
+    #[test]
+    fn flat_entries_block_scalar_is_absent() {
+        let entries = flat_entries(b"---\ndescription: |\n  multi\n---\n");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].value, "|");
+        assert!(entries[0].is_absent());
+    }
+
+    #[test]
+    fn flat_entries_require_block() {
+        assert!(flat_entries(b"# no frontmatter\nname: x\n").is_empty());
+        assert!(flat_entries(b"---\nname: x\n").is_empty()); // unclosed
     }
 
     #[test]
