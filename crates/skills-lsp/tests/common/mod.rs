@@ -151,6 +151,22 @@ impl TestClient {
         )
     }
 
+    /// Next `window/logMessage` notification as `(type, message)`.
+    pub async fn wait_log_message(&mut self) -> (i64, String) {
+        let msg = self
+            .wait_for(|msg| msg.get("method").and_then(Value::as_str) == Some("window/logMessage"))
+            .await;
+        (
+            msg.pointer("/params/type")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            msg.pointer("/params/message")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        )
+    }
+
     async fn wait_for(&mut self, pred: impl Fn(&Value) -> bool) -> Value {
         if let Some(pos) = self.pending.iter().position(&pred) {
             return self.pending.remove(pos).expect("position exists");

@@ -25,13 +25,16 @@ use tower_lsp_server::{Client, LanguageServer};
 use skills_core::manifest::{MANIFEST_NAME, Manifest};
 
 use crate::watch::WatchHandle;
-use crate::{analysis, completion, update, watch};
+use crate::{analysis, completion, tasks, update, watch};
 
 /// Debounce window for `didChange` bursts.
 const CHANGE_DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// The `workspace/executeCommand` command id.
+/// The `workspace/executeCommand` command id running the sync pipeline.
 pub const UPDATE_COMMAND: &str = "skills.update";
+
+/// The `workspace/executeCommand` command id generating `.zed/tasks.json`.
+pub const SETUP_TASKS_COMMAND: &str = "skills.setupTasks";
 
 /// Documents this server cares about, selected by basename.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -254,6 +257,87 @@ impl Backend {
         // Post-update state changed on disk — refresh all diagnostics.
         self.reanalyze_open_docs().await;
     }
+
+    /// `skills.setupTasks`: write/merge `.zed/tasks.json` entries running
+    /// this very server binary (Zed's ▶ runnables then bypass PATH).
+    async fn run_setup_tasks(&self, root: &Path) {
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(e) => {
+                self.client
+                    .show_message(
+                        MessageType::ERROR,
+                        format!("skills: cannot resolve the server binary path: {e}"),
+                    )
+                    .await;
+                return;
+            }
+        };
+        let (message_type, message) = match tasks::setup_tasks(root, &exe) {
+            Ok(tasks::SetupOutcome::Created) => (
+                MessageType::INFO,
+                format!(
+                    "skills: created {} — the ▶ gutter tasks now run this language server's binary",
+                    tasks::TASKS_REL
+                ),
+            ),
+            Ok(tasks::SetupOutcome::Updated) => (
+                MessageType::INFO,
+                format!(
+                    "skills: updated the skills task entries in {} to this language server's binary",
+                    tasks::TASKS_REL
+                ),
+            ),
+            Ok(tasks::SetupOutcome::UpToDate) => (
+                MessageType::INFO,
+                format!("skills: {} is already up to date", tasks::TASKS_REL),
+            ),
+            Err(message) => (MessageType::ERROR, format!("skills: {message}")),
+        };
+        self.client.show_message(message_type, message).await;
+    }
+
+    /// Startup reconciliation: silently repoint stale `.zed/tasks.json`
+    /// entries (dead paths / stale versioned extension downloads) at the
+    /// current binary. Never creates the file, never touches foreign tasks.
+    async fn reconcile_tasks(&self, root: &Path) {
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        match tasks::reconcile(root, &exe) {
+            Ok(Some(count)) => {
+                self.client
+                    .log_message(
+                        MessageType::INFO,
+                        format!(
+                            "skills: rewrote {count} stale task command path(s) in {} to {}",
+                            tasks::TASKS_REL,
+                            exe.display()
+                        ),
+                    )
+                    .await;
+            }
+            Ok(None) => {}
+            Err(message) => {
+                self.client
+                    .log_message(
+                        MessageType::WARNING,
+                        format!("skills: {} reconcile skipped: {message}", tasks::TASKS_REL),
+                    )
+                    .await;
+            }
+        }
+    }
+}
+
+/// Honor `CodeActionContext.only` when the client sends it: a kind is
+/// allowed when no filter is present or some requested kind is a prefix of
+/// ours (LSP kinds are hierarchical, `source` covers `source.x`).
+fn kind_allowed(only: Option<&[CodeActionKind]>, kind: &CodeActionKind) -> bool {
+    match only {
+        None => true,
+        Some(list) => list.iter().any(|k| kind.as_str().starts_with(k.as_str())),
+    }
 }
 
 /// Diagnostic codes whose fix is running `skills update`.
@@ -301,7 +385,7 @@ impl LanguageServer for Backend {
                     ..CompletionOptions::default()
                 }),
                 execute_command_provider: Some(ExecuteCommandOptions {
-                    commands: vec![UPDATE_COMMAND.to_string()],
+                    commands: vec![UPDATE_COMMAND.to_string(), SETUP_TASKS_COMMAND.to_string()],
                     ..ExecuteCommandOptions::default()
                 }),
                 ..ServerCapabilities::default()
@@ -317,6 +401,7 @@ impl LanguageServer for Backend {
         let root = self.state.init_root.lock().expect("state lock").clone();
         if let Some(root) = root {
             self.ensure_watcher(&root);
+            self.reconcile_tasks(&root).await;
         }
     }
 
@@ -431,6 +516,16 @@ impl LanguageServer for Backend {
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let Some(root) = self.project_root_for(&params.text_document.uri) else {
+            return Ok(None);
+        };
+        let root_arg = vec![serde_json::Value::String(
+            root.to_string_lossy().into_owned(),
+        )];
+        let only = params.context.only.as_deref();
+        let mut actions: Vec<CodeActionOrCommand> = Vec::new();
+
+        // Quickfix: "Run skills update" on stale/not-fetched diagnostics.
         let matching: Vec<Diagnostic> = params
             .context
             .diagnostics
@@ -438,33 +533,52 @@ impl LanguageServer for Backend {
             .filter(|d| actionable(d))
             .cloned()
             .collect();
-        if matching.is_empty() {
+        if !matching.is_empty() && kind_allowed(only, &CodeActionKind::QUICKFIX) {
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: "Run skills update".to_string(),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(matching),
+                command: Some(Command {
+                    title: "Run skills update".to_string(),
+                    command: UPDATE_COMMAND.to_string(),
+                    arguments: Some(root_arg.clone()),
+                }),
+                ..CodeAction::default()
+            }));
+        }
+
+        // Source action on any manifest buffer (no diagnostic required):
+        // generate/refresh `.zed/tasks.json` so the ▶ gutter tasks run this
+        // server's own binary instead of `skills` from PATH.
+        if matches!(
+            Self::classify(&params.text_document.uri),
+            Some((DocKind::Manifest, _))
+        ) && kind_allowed(only, &CodeActionKind::SOURCE)
+        {
+            let title = format!("skills: set up gutter tasks ({})", tasks::TASKS_REL);
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: title.clone(),
+                kind: Some(CodeActionKind::SOURCE),
+                command: Some(Command {
+                    title,
+                    command: SETUP_TASKS_COMMAND.to_string(),
+                    arguments: Some(root_arg),
+                }),
+                ..CodeAction::default()
+            }));
+        }
+
+        if actions.is_empty() {
             return Ok(None);
         }
-        let Some(root) = self.project_root_for(&params.text_document.uri) else {
-            return Ok(None);
-        };
-        let action = CodeAction {
-            title: "Run skills update".to_string(),
-            kind: Some(CodeActionKind::QUICKFIX),
-            diagnostics: Some(matching),
-            command: Some(Command {
-                title: "Run skills update".to_string(),
-                command: UPDATE_COMMAND.to_string(),
-                arguments: Some(vec![serde_json::Value::String(
-                    root.to_string_lossy().into_owned(),
-                )]),
-            }),
-            ..CodeAction::default()
-        };
-        Ok(Some(vec![CodeActionOrCommand::CodeAction(action)]))
+        Ok(Some(actions))
     }
 
     async fn execute_command(
         &self,
         params: ExecuteCommandParams,
     ) -> Result<Option<serde_json::Value>> {
-        if params.command != UPDATE_COMMAND {
+        if params.command != UPDATE_COMMAND && params.command != SETUP_TASKS_COMMAND {
             return Err(Error::invalid_params(format!(
                 "unknown command '{}'",
                 params.command
@@ -477,11 +591,16 @@ impl LanguageServer for Backend {
             .map(PathBuf::from)
             .or_else(|| self.state.init_root.lock().expect("state lock").clone());
         let Some(root) = root else {
-            return Err(Error::invalid_params(
-                "skills.update: no project root (pass it as the first argument)",
-            ));
+            return Err(Error::invalid_params(format!(
+                "{}: no project root (pass it as the first argument)",
+                params.command
+            )));
         };
-        self.run_update_command(&root).await;
+        if params.command == UPDATE_COMMAND {
+            self.run_update_command(&root).await;
+        } else {
+            self.run_setup_tasks(&root).await;
+        }
         Ok(None)
     }
 }

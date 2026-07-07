@@ -44,12 +44,12 @@ async fn stale_diagnostic_offers_the_code_action_and_the_command_syncs() {
         )
         .await;
     let actions = response.as_array().expect("code action list");
-    assert_eq!(actions.len(), 1);
-    let action = &actions[0];
-    assert_eq!(
-        action.get("title").and_then(Value::as_str),
-        Some("Run skills update")
-    );
+    // The quickfix plus the always-offered "set up gutter tasks" source action.
+    assert_eq!(actions.len(), 2);
+    let action = actions
+        .iter()
+        .find(|a| a.get("title").and_then(Value::as_str) == Some("Run skills update"))
+        .expect("quickfix listed");
     let command = action.get("command").expect("command attached");
     assert_eq!(
         command.get("command").and_then(Value::as_str),

@@ -10,6 +10,10 @@
 //!   `---` block snippet).
 //! - Code action "Run skills update" → `workspace/executeCommand`
 //!   `skills.update` runs the real pipeline in-process.
+//! - Source code action "skills: set up gutter tasks" → `skills.setupTasks`
+//!   generates/merges `.zed/tasks.json` entries running this very binary
+//!   (Zed's ▶ runnables then bypass `skills` on PATH); startup reconciles
+//!   stale binary paths after extension updates.
 //! - Own `notify` FS watcher re-triggers analysis on external changes.
 
 pub mod analysis;
@@ -17,10 +21,11 @@ pub mod completion;
 pub mod offline;
 pub mod server;
 pub mod spanindex;
+pub mod tasks;
 pub mod update;
 pub mod watch;
 
-pub use server::{Backend, UPDATE_COMMAND};
+pub use server::{Backend, SETUP_TASKS_COMMAND, UPDATE_COMMAND};
 
 /// Serve LSP over stdio until the client disconnects.
 pub async fn run_stdio() -> anyhow::Result<()> {
