@@ -53,6 +53,39 @@ In this order:
 On x86_64 macOS there is no prebuilt asset: install the `skills` CLI into PATH (or set the
 settings override above) and the extension will use it.
 
+## Schema completion
+
+`skills init` (and `skills add`, when it creates a fresh manifest) writes a `"$schema"` key
+pointing at the published [JSON Schema](https://raw.githubusercontent.com/roxblnfk/zed-skills/master/resources/skills.schema.json),
+so any editor with JSON Schema support (VS Code, JetBrains, …) gets key/value completion and
+validation for `skills.json` out of the box.
+
+**In Zed, schema-driven completion is currently unavailable for `skills.json`** — and no
+settings snippet can enable it. The file belongs to the extension's own `Skills JSON` language
+(that's what powers the diagnostics and ▶ runnables), and Zed's built-in `json-language-server`
+cannot be attached to an extension-provided language: the
+`"languages": {"Skills JSON": {"language_servers": [...]}}` setting can only add servers Zed
+registers as *globally available* (tailwind, eslint, vtsls, typescript-language-server —
+`json-language-server` is not among them), and extension language configs cannot declare other
+language servers at all. Validation still comes live from `skills lsp`; only completion is
+missing.
+
+If you want schema completion *more* than the skills tooling, you can hand the file back to the
+built-in JSONC language — this detaches the skills language server **and** the ▶ gutter tasks
+(trade-off, not recommended):
+
+```json
+{
+  "file_types": {
+    "JSONC": ["skills.json"]
+  }
+}
+```
+
+With that mapping `json-language-server` picks the schema up from the inline `"$schema"` and
+also validates against it (its diagnostics would then replace — not duplicate — the pipeline-aware
+ones from `skills lsp`).
+
 ## Runnables & tasks
 
 Opening a `skills.json` shows ▶ buttons in the gutter (no configuration needed — the tasks are
