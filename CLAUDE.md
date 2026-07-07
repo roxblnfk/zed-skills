@@ -38,7 +38,7 @@ extension/                # Zed extension (wasm32-wasip2, zed_extension_api) —
 
 - Rust edition 2024, toolchain ≥ 1.96. `cargo fmt` + `cargo clippy -- -D warnings` must pass.
 - Tests: unit per pipeline stage; shared contract-test suite run against every provider; `wiremock` for GitHub/GitLab (no network in tests); `insta` snapshots for E2E tree comparison; idempotency invariant (sync twice = same state). Windows is a first-class target (junctions vs symlinks).
-- Commits: **no signing** (repo config `commit.gpgsign=false` is already set — don't override it). Never commit `docs/PLAN.md` / `docs/SPEC.md`.
+- Commits: **signed** (repo config `commit.gpgsign=true`, key configured; signing is non-interactive — don't flip this setting). Never commit `docs/PLAN.md` / `docs/SPEC.md`.
 - Delegate large implementation chunks to subagents to keep the main context lean.
 
 ## Commands
