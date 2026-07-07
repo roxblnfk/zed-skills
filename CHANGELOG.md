@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/roxblnfk/zed-skills/compare/v0.2.0...v0.3.0) (2026-07-07)
+
+
+### Features
+
+* **extension:** yaml frontmatter and embedded-language injections for SKILL.md ([45333c1](https://github.com/roxblnfk/zed-skills/commit/45333c19b1d147858621f9b1c7e221853f7820f8))
+* **lsp:** frontmatter validation diagnostics for SKILL.md ([9b30905](https://github.com/roxblnfk/zed-skills/commit/9b309054004b8c45243c10753b250bc56f5dfdca))
+* **lsp:** generate and maintain .zed/tasks.json for Zed gutter runnables ([d58379d](https://github.com/roxblnfk/zed-skills/commit/d58379d448aa1c0be699a8bee759690008aec851))
+* **lsp:** honor the lock-file manifest option in analysis and watch set ([b23fce4](https://github.com/roxblnfk/zed-skills/commit/b23fce4d24311bf8f0e547784cc14ea3fa8d3dbe))
+
+
+### Bug Fixes
+
+* **cli:** point generated manifests at the real published JSON Schema ([912da37](https://github.com/roxblnfk/zed-skills/commit/912da3713eac2f2c64c1b35f671b3a756c2d72f9))
+
 ## [0.2.0](https://github.com/roxblnfk/zed-skills/compare/v0.1.0...v0.2.0) (2026-07-06)
 
 
