@@ -1,0 +1,6 @@
+---
+source: crates/skills-cli/tests/e2e_naming.rs
+assertion_line: 64
+expression: stderr_of(&assert)
+---
+error: skill name conflict: 'Foo'/'foo' provided by [dir/donor-a, dir/donor-b]

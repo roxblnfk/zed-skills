@@ -60,6 +60,17 @@ pub mod codes {
     pub const NOTE: &str = "note";
     /// skills.lock could not be read/parsed.
     pub const LOCKFILE: &str = "lockfile";
+    /// A donor ships a skill whose directory name is FS-dangerous — the
+    /// pipeline aborts on it before any write.
+    pub const DANGEROUS_NAME: &str = "dangerous-name";
+}
+
+/// Stable diagnostic codes for `SKILL.md` that are not textcheck codes.
+pub mod md_codes {
+    /// Containing directory name violates the Agent Skills spec name rules.
+    pub const DIR_FORMAT: &str = "dir-format";
+    /// Containing directory name is FS-dangerous — `skills update` aborts.
+    pub const DIR_DANGER: &str = "dir-danger";
 }
 
 fn diag(range: Range, severity: DiagnosticSeverity, code: &str, message: String) -> Diagnostic {
@@ -117,6 +128,28 @@ pub async fn analyze_manifest(project_root: &Path, text: &str) -> Vec<Diagnostic
 pub fn analyze_skill_md(text: &str, dir_name: Option<&str>) -> Vec<Diagnostic> {
     let line_index = LineRanges::new(text);
     let mut diags = Vec::new();
+    // Directory-name checks (the name is not in the document text, so both
+    // anchor to the first line). A dangerous name subsumes the spec warning.
+    if let Some(dir_name) = dir_name {
+        if let Some(reason) = skills_core::naming::dir_name_danger(dir_name) {
+            diags.push(diag(
+                line_index.line(0),
+                DiagnosticSeverity::ERROR,
+                md_codes::DIR_DANGER,
+                format!(
+                    "skill directory name '{dir_name}' {reason} — \
+                     `skills update` aborts on this skill (rename the directory)"
+                ),
+            ));
+        } else if let Some(reason) = skills_audit::dir_name_spec_error(dir_name) {
+            diags.push(diag(
+                line_index.line(0),
+                DiagnosticSeverity::WARNING,
+                md_codes::DIR_FORMAT,
+                format!("skill directory name '{dir_name}' {reason}"),
+            ));
+        }
+    }
     for check in skills_audit::skill_md_checks(text.as_bytes(), dir_name) {
         diags.push(diag(
             line_index.line(check.line),
@@ -351,9 +384,9 @@ async fn dry_pipeline(
                     .collect::<Vec<_>>()
                     .join(", ");
                 let message = format!(
-                    "skill '{}' is provided by more than one donor: {offenders} — \
+                    "skill {} is provided by more than one donor: {offenders} — \
                      `skills update` aborts until resolved (use skills[] allowlists)",
-                    conflict.id
+                    conflict.display_ids()
                 );
                 let mut ranges: Vec<Range> = conflict
                     .vendors
@@ -375,6 +408,24 @@ async fn dry_pipeline(
                         message.clone(),
                     ));
                 }
+            }
+        }
+        Err(skills_core::error::ResolveError::DangerousName(dangerous)) => {
+            for danger in dangerous {
+                let range = remote_index_for_name(&ctx.manifest, danger.vendor.as_str())
+                    .and_then(|idx| span.range_of(&remote_path(idx)))
+                    .unwrap_or_else(|| span.first_line());
+                diags.push(diag(
+                    range,
+                    DiagnosticSeverity::ERROR,
+                    codes::DANGEROUS_NAME,
+                    format!(
+                        "dangerous skill directory name: '{}' from {} {} — \
+                         `skills update` aborts before writing anything \
+                         (exclude it via skills[] allowlists or have the donor rename it)",
+                        danger.id, danger.vendor, danger.reason
+                    ),
+                ));
             }
         }
         Ok(resolution) => {
@@ -566,6 +617,65 @@ mod tests {
         );
         assert_eq!(diags[0].severity, Some(DiagnosticSeverity::WARNING));
         assert_eq!(diags[0].range.start.line, 3);
+    }
+
+    #[test]
+    fn dir_name_spec_violation_warns_on_first_line() {
+        let text = "---\nname: my-skill\ndescription: d\n---\n";
+        let diags = analyze_skill_md(text, Some("My_Skill"));
+        let dir = diags
+            .iter()
+            .find(|d| d.code == Some(NumberOrString::String("dir-format".into())))
+            .expect("dir-format diagnostic");
+        assert_eq!(dir.severity, Some(DiagnosticSeverity::WARNING));
+        assert_eq!(dir.range.start.line, 0);
+        assert!(dir.message.contains("'My_Skill'"), "{}", dir.message);
+        // name-mismatch fires too (frontmatter name != dir name) — distinct
+        // problems, both reported.
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == Some(NumberOrString::String("name-mismatch".into())))
+        );
+    }
+
+    #[test]
+    fn dangerous_dir_name_is_error_and_subsumes_the_spec_warning() {
+        let text = "---\nname: nul\ndescription: d\n---\n";
+        let diags = analyze_skill_md(text, Some("nul"));
+        let danger = diags
+            .iter()
+            .find(|d| d.code == Some(NumberOrString::String("dir-danger".into())))
+            .expect("dir-danger diagnostic");
+        assert_eq!(danger.severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(danger.range.start.line, 0);
+        assert!(
+            danger
+                .message
+                .contains("reserved Windows device name 'NUL'"),
+            "{}",
+            danger.message
+        );
+        assert!(
+            danger.message.contains("`skills update` aborts"),
+            "{}",
+            danger.message
+        );
+        // No dir-format warning on top of the danger error.
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.code == Some(NumberOrString::String("dir-format".into())))
+        );
+    }
+
+    #[test]
+    fn clean_dir_name_and_absent_dir_name_yield_no_dir_diags() {
+        let text = "---\nname: tidy\ndescription: d\n---\n";
+        assert!(analyze_skill_md(text, Some("tidy")).is_empty());
+        // Unknown dir name (no URI context): nothing to check.
+        let text = "---\ndescription: d\n---\n";
+        assert!(analyze_skill_md(text, None).is_empty());
     }
 
     #[test]

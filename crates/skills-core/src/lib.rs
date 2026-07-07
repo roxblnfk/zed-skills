@@ -9,6 +9,7 @@ pub mod fsutil;
 pub mod link;
 pub mod lockfile;
 pub mod manifest;
+pub mod naming;
 pub mod paths;
 pub mod pattern;
 pub mod pipeline;
@@ -31,6 +32,7 @@ pub use manifest::{
     AuditConfig, AuditMode, AuditStep, DEFAULT_TARGET, HttpStep, LlmStep, MANIFEST_NAME, Manifest,
     OnFail, StaticStep,
 };
+pub use naming::{conflict_key, dir_name_danger};
 pub use pattern::VendorPattern;
 pub use pipeline::ChainEntry;
 pub use pipeline::ctx::{Ctx, PrepareOptions};

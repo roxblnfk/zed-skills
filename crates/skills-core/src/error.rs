@@ -110,11 +110,37 @@ pub enum ScanError {
     Task(String),
 }
 
-/// A single dir-name collision between donors.
+/// A single dir-name collision between donors. Grouping is done on the
+/// normalized key ([`crate::naming::conflict_key`]), so case and Unicode
+/// normalization variants that would merge into one directory on Windows /
+/// macOS land in the same conflict; `ids` keeps the original spellings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conflict {
-    pub id: SkillId,
+    /// All distinct original dir-name spellings in the group, sorted.
+    pub ids: Vec<SkillId>,
     pub vendors: Vec<VendorName>,
+}
+
+impl Conflict {
+    /// The original spellings for messages: `'Foo'/'foo'`.
+    pub fn display_ids(&self) -> String {
+        self.ids
+            .iter()
+            .map(|id| format!("'{id}'"))
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+}
+
+/// A skill whose directory name cannot be created safely on every supported
+/// filesystem ([`crate::naming::dir_name_danger`]). Aborts the run at the
+/// Resolve barrier, before any filesystem write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DangerousName {
+    pub id: SkillId,
+    pub vendor: VendorName,
+    /// Predicate of the name: "is the reserved Windows device name 'NUL'".
+    pub reason: String,
 }
 
 /// Resolve stage failure (the pipeline barrier).
@@ -122,6 +148,8 @@ pub struct Conflict {
 pub enum ResolveError {
     #[error("skill name conflict: {}", format_conflicts(.0))]
     Conflict(Vec<Conflict>),
+    #[error("dangerous skill directory name: {}", format_dangerous(.0))]
+    DangerousName(Vec<DangerousName>),
 }
 
 fn format_conflicts(conflicts: &[Conflict]) -> String {
@@ -134,8 +162,16 @@ fn format_conflicts(conflicts: &[Conflict]) -> String {
                 .map(VendorName::as_str)
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("'{}' provided by [{vendors}]", c.id)
+            format!("{} provided by [{vendors}]", c.display_ids())
         })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_dangerous(dangerous: &[DangerousName]) -> String {
+    dangerous
+        .iter()
+        .map(|d| format!("'{}' from {} {}", d.id, d.vendor, d.reason))
         .collect::<Vec<_>>()
         .join("; ")
 }

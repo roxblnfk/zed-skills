@@ -1,0 +1,13 @@
+---
+source: crates/skills-lsp/tests/lsp_skill_docs.rs
+assertion_line: 118
+expression: simplify(&diags)
+---
+[
+  {
+    "code": "dir-danger",
+    "message": "skill directory name 'nul' is the reserved Windows device name 'NUL' — `skills update` aborts on this skill (rename the directory)",
+    "range": "0:0-0:3",
+    "severity": "error"
+  }
+]

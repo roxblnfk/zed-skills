@@ -1,0 +1,19 @@
+---
+source: crates/skills-lsp/tests/lsp_skill_docs.rs
+assertion_line: 94
+expression: simplify(&diags)
+---
+[
+  {
+    "code": "dir-format",
+    "message": "skill directory name 'Bad_Dir' may only contain lowercase letters, digits and hyphens (Agent Skills spec)",
+    "range": "0:0-0:3",
+    "severity": "warning"
+  },
+  {
+    "code": "name-mismatch",
+    "message": "frontmatter name 'good-name' does not match the directory name 'Bad_Dir'",
+    "range": "1:0-1:15",
+    "severity": "warning"
+  }
+]
