@@ -1,6 +1,6 @@
 //! Lexical path normalization helpers.
 //!
-//! Manifest paths (`target`, `aliases`, `local.dir`) are normalized without
+//! Manifest paths (`target`, `aliases`, `lock-file`) are normalized without
 //! touching the filesystem so validation is deterministic and portable.
 
 use std::path::{Path, PathBuf};

@@ -1,4 +1,5 @@
-//! GitLab provider: `remote[]` entries with `from: "gitlab"`.
+//! GitLab provider: `sources[]` entries with `from: "gitlab"` (the
+//! deprecated `remote[]` alias is read too).
 //!
 //! - `package` accepts 2+ non-empty segments of arbitrary depth
 //!   (`org/group/sub/project` — nested subgroups).
@@ -89,7 +90,7 @@ impl VendorProvider for GitlabProvider {
 
     async fn discover(&self, ctx: &Ctx) -> Result<Vec<VendorRef>, DiscoverError> {
         let mut refs = Vec::new();
-        for entry in ctx.manifest.remote.iter().flatten() {
+        for entry in ctx.manifest.sources().iter() {
             if entry.from != "gitlab" {
                 continue;
             }
@@ -110,7 +111,7 @@ impl VendorProvider for GitlabProvider {
                 name: vendor.name().clone(),
                 origin: vendor.origin().clone(),
                 filter: SkillsFilter::from_manifest(entry.skills.clone()),
-                // remote[] entries are user-declared - implicitly trusted.
+                // sources[] entries are user-declared - implicitly trusted.
                 trust: TrustBasis::UserDeclared,
                 status: DonorStatus::Declared,
                 vendor: Arc::new(vendor),
@@ -318,6 +319,8 @@ mod tests {
 
     #[tokio::test]
     async fn discovers_gitlab_entries_with_subgroups() {
+        // Uses the deprecated `remote` alias — proves it still flows through
+        // discovery.
         let (_tmp, ctx) = ctx(r#"{ "remote": [
                 { "from": "gitlab", "package": "org/group/sub/project", "host": "gitlab.example.com" },
                 { "from": "github", "package": "a/b" }
@@ -339,7 +342,7 @@ mod tests {
     #[tokio::test]
     async fn empty_segment_package_is_a_discover_error() {
         let (_tmp, ctx) =
-            ctx(r#"{ "remote": [ { "from": "gitlab", "package": "group//project" } ] }"#);
+            ctx(r#"{ "sources": [ { "from": "gitlab", "package": "group//project" } ] }"#);
         let provider = GitlabProvider::new(Arc::new(MockHttp::new()), None);
         let err = provider.discover(&ctx).await.unwrap_err();
         assert!(err.to_string().contains("non-empty segments"), "{err}");

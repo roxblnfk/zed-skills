@@ -4,7 +4,7 @@
 //! `WellKnownLocator` → `RecursiveFallbackLocator` → `DeclaredLocator`.
 //! Applicability is routed by [`SourceHint`] on the materialized vendor:
 //!
-//! - `ExplicitRoot` (local `local.dir` donors) — the vendor root itself is
+//! - `ExplicitRoot` (local `dir` source donors) — the vendor root itself is
 //!   the skills root ([`DeclaredLocator`]).
 //! - `Declared(source)` (composer donors with `extra.skills.source`) — the
 //!   declared directory is the skills root ([`ComposerDeclaredLocator`]).
@@ -24,7 +24,7 @@ use skills_core::traits::{Located, SkillLocator};
 
 use crate::treescan;
 
-/// Declared locator, explicit-root flavor: a `local.dir` vendor's root is
+/// Declared locator, explicit-root flavor: a `dir` source vendor's root is
 /// itself the skills root. Immediate subdirectories containing `SKILL.md`
 /// become skills.
 pub struct DeclaredLocator;

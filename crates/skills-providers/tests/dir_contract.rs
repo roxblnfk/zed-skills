@@ -24,7 +24,7 @@ async fn dir_provider_satisfies_vendor_contract() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join(MANIFEST_NAME),
-        r#"{ "local": { "dir": ["./skills-src"] } }"#,
+        r#"{ "sources": [ { "from": "dir", "path": "./skills-src" } ] }"#,
     )
     .unwrap();
     let donor = tmp.path().join("skills-src");

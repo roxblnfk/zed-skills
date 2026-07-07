@@ -45,6 +45,7 @@ fn schema_top_level_properties_match_serde_model() {
         "trusted-replace",
         "discovery",
         "local",
+        "sources",
         "remote",
         "audit",
         "path-from-root",
@@ -62,8 +63,12 @@ fn schema_top_level_properties_match_serde_model() {
         "trusted": ["v/p"],
         "trusted-replace": true,
         "discovery": true,
-        "local": { "composer": false, "dir": ["./d"], "npm": true, "go": true },
-        "remote": [ { "from": "github", "package": "a/b", "ref": "v1", "host": "h", "skills": [] } ],
+        "local": { "composer": false, "npm": true, "go": true },
+        "sources": [
+            { "from": "github", "package": "a/b", "ref": "v1", "host": "h", "skills": [] },
+            { "from": "zip", "url": "https://example.com/s.zip", "sha256": "abc" },
+            { "from": "dir", "path": "./skills-src", "package": "acme/local-skills", "skills": ["x"] }
+        ],
         "audit": { "mode": "warn", "pipeline": [
             { "use": "static", "on-fail": "warn" },
             { "use": "llm", "model": "m", "on-fail": "warn" },
@@ -74,17 +79,50 @@ fn schema_top_level_properties_match_serde_model() {
     Manifest::parse(doc).unwrap();
 }
 
+/// The deprecated `remote` alias must still parse (back-compat manifests).
 #[test]
-fn schema_remote_enum_matches_model() {
+fn legacy_remote_keyed_doc_still_parses() {
+    let doc = r#"{
+        "remote": [
+            { "from": "github", "package": "a/b", "ref": "v1", "host": "h", "skills": [] },
+            { "from": "zip", "url": "https://example.com/s.zip", "sha256": "abc" }
+        ]
+    }"#;
+    let m = Manifest::parse(doc).unwrap();
+    assert!(m.uses_deprecated_remote());
+    assert_eq!(m.sources().len(), 2);
+}
+
+#[test]
+fn schema_source_enums_match_model() {
     let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
-    let from = &schema["properties"]["remote"]["items"]["properties"]["from"]["enum"];
-    assert_eq!(
-        from.as_array()
+    let from_enum = |def: &str| -> Vec<String> {
+        schema["$defs"][def]["properties"]["from"]["enum"]
+            .as_array()
             .unwrap()
             .iter()
-            .map(|v| v.as_str().unwrap())
-            .collect::<Vec<_>>(),
-        ["github", "gitlab", "http", "zip"]
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(from_enum("sourceByPackage"), ["github", "gitlab"]);
+    assert_eq!(from_enum("sourceByUrl"), ["http", "zip"]);
+    assert_eq!(from_enum("sourceByDir"), ["dir"]);
+}
+
+/// `remote` is a deprecated alias of `sources`; the top-level `not` guard
+/// forbids setting both (mirrors the serde-side validation).
+#[test]
+fn schema_marks_remote_deprecated_and_guards_both_keys() {
+    let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
+    assert_eq!(schema["properties"]["remote"]["deprecated"], true);
+    assert_eq!(
+        schema["not"]["required"],
+        serde_json::json!(["sources", "remote"])
+    );
+    // Both lists share the same entry shapes.
+    assert_eq!(
+        schema["properties"]["remote"]["items"],
+        schema["properties"]["sources"]["items"]
     );
 }
 

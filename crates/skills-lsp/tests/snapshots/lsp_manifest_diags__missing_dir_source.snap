@@ -1,0 +1,12 @@
+---
+source: crates/skills-lsp/tests/lsp_manifest_diags.rs
+expression: simplify(&diags)
+---
+[
+  {
+    "code": "discover",
+    "message": "provider dir: sources dir path does not exist: './nope'",
+    "range": "2:29-2:37",
+    "severity": "error"
+  }
+]

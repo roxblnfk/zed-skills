@@ -1,5 +1,5 @@
-//! `skills add <url|from:package>` — register a remote donor in
-//! `skills.json`, validate it actually ships skills, then sync.
+//! `skills add <url|from:package>` — register a donor in `skills.json`'s
+//! `sources[]`, validate it actually ships skills, then sync.
 //!
 //! Flow (PHP `skills:add` parity):
 //! 1. parse the input (shorthand / web / ssh / scp);
@@ -138,9 +138,14 @@ pub async fn run(
     .await
 }
 
-/// Insert or update the `remote[]` entry (uniqueness key:
+/// Insert or update the `sources[]` entry (uniqueness key:
 /// `from|host|package`), preserving the rest of the manifest. The file is
 /// rewritten with 2-space indentation.
+///
+/// Auto-migration: a manifest that still uses the deprecated `remote` key
+/// (and no `sources`) is upgraded in place — the key is renamed to
+/// `sources`, preserving its entries and their order. A manifest that sets
+/// both keys is rejected before any write.
 fn upsert_manifest_entry(
     cwd: &Path,
     from: &str,
@@ -165,12 +170,26 @@ fn upsert_manifest_entry(
         )));
     };
 
-    let remote = root
-        .entry("remote")
+    // Auto-migrate the deprecated alias: rename `remote` -> `sources`
+    // (preserving its entries and order). Setting both keys is a config
+    // error — refuse before touching anything.
+    if root.contains_key("remote") {
+        if root.contains_key("sources") {
+            return Err(CliError::config(format!(
+                "{MANIFEST_NAME} sets both 'sources' and its deprecated alias 'remote'; \
+                 keep only 'sources'"
+            )));
+        }
+        let entries = root.remove("remote").unwrap_or(Value::Array(Vec::new()));
+        root.insert("sources".to_string(), entries);
+    }
+
+    let sources = root
+        .entry("sources")
         .or_insert_with(|| Value::Array(Vec::new()));
-    let Value::Array(entries) = remote else {
+    let Value::Array(entries) = sources else {
         return Err(CliError::config(format!(
-            "{MANIFEST_NAME}: 'remote' must be an array"
+            "{MANIFEST_NAME}: 'sources' must be an array"
         )));
     };
 

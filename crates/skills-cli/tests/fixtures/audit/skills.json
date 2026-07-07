@@ -1,4 +1,7 @@
 {
-  "local": { "dir": ["./clean-src", "./danger-src"] },
+  "sources": [
+    { "from": "dir", "path": "./clean-src" },
+    { "from": "dir", "path": "./danger-src" }
+  ],
   "audit": { "mode": "warn" }
 }

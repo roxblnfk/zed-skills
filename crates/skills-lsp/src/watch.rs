@@ -3,8 +3,9 @@
 //! on client-side `workspace/didChangeWatchedFiles`.
 //!
 //! Watch set: the project root (non-recursive — covers `skills.json` and a
-//! root-level lockfile), every `local.dir` path, `vendor/` (composer donors),
-//! the sync target and the parent dir of a non-root `lock-file` path.
+//! root-level lockfile), every `sources[]` dir-entry path, `vendor/`
+//! (composer donors), the sync target and the parent dir of a non-root
+//! `lock-file` path.
 //! Events are debounced by `notify-debouncer-mini` and
 //! forwarded as a unit signal; the server re-analyzes open documents and
 //! re-resolves the watch set (the manifest may have changed).
@@ -66,8 +67,11 @@ pub fn start(
 fn watch_set(project_root: &Path, manifest: Option<&Manifest>) -> Vec<PathBuf> {
     let mut paths = vec![project_root.join("vendor")];
     if let Some(manifest) = manifest {
-        for dir in manifest.local_dirs() {
-            paths.push(join_declared(project_root, dir));
+        // Every dir-entry donor path (their skills feed the analysis).
+        for entry in manifest.sources().iter().filter(|e| e.from == "dir") {
+            if let Some(path) = entry.path.as_deref() {
+                paths.push(join_declared(project_root, path));
+            }
         }
         paths.push(project_root.join(rel_to_path(&manifest.effective_target())));
         let lock_abs = project_root.join(rel_to_path(&manifest.effective_lock_file()));
@@ -92,7 +96,10 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("skills-src")).unwrap();
         std::fs::create_dir_all(tmp.path().join("vendor")).unwrap();
         let manifest = Manifest::parse(
-            r#"{ "local": { "dir": ["./skills-src", "./missing"] }, "target": "t" }"#,
+            r#"{ "sources": [
+                { "from": "dir", "path": "./skills-src" },
+                { "from": "dir", "path": "./missing" }
+            ], "target": "t" }"#,
         )
         .unwrap();
         let set = watch_set(tmp.path(), Some(&manifest));

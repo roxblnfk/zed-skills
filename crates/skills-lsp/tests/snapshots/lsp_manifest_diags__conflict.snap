@@ -6,7 +6,13 @@ expression: simplify(&diags)
   {
     "code": "conflict",
     "message": "skill 'clash' is provided by more than one donor: dir/a-skills, dir/b-skills — `skills update` aborts until resolved (use skills[] allowlists)",
-    "range": "0:0-0:1",
+    "range": "2:4-2:43",
+    "severity": "error"
+  },
+  {
+    "code": "conflict",
+    "message": "skill 'clash' is provided by more than one donor: dir/a-skills, dir/b-skills — `skills update` aborts until resolved (use skills[] allowlists)",
+    "range": "3:4-3:43",
     "severity": "error"
   }
 ]

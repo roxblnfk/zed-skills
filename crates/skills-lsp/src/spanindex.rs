@@ -127,8 +127,8 @@ mod tests {
     const DOC: &str = r#"{
   "target": ".agents/skills",
   "aliases": [".claude/skills", ".cursor/skills"],
-  "local": { "dir": ["./skills-src"] },
-  "remote": [
+  "sources": [
+    { "from": "dir", "path": "./skills-src" },
     { "from": "github", "package": "acme/skills",
       "skills": ["one", "two"] },
     { "from": "zip", "url": "https://example.com/a.zip" }
@@ -156,21 +156,25 @@ mod tests {
     #[test]
     fn resolves_nested_object_and_array_paths() {
         let span = SpanIndex::new(DOC);
+        // sources[0].path is the exact string value of the dir entry.
         let range = span
-            .range_of(&[key("local"), key("dir"), PathSeg::Index(0)])
+            .range_of(&[key("sources"), PathSeg::Index(0), key("path")])
             .unwrap();
-        assert_eq!(range.start.line, 3);
+        assert_eq!(range.start.line, 4);
+        let text_at = &DOC.lines().nth(4).unwrap()
+            [range.start.character as usize..range.end.character as usize];
+        assert_eq!(text_at, "\"./skills-src\"");
 
-        // remote[0] spans the whole entry object (multi-line).
-        let range = span.range_of(&[key("remote"), PathSeg::Index(0)]).unwrap();
+        // sources[1] spans the whole entry object (multi-line).
+        let range = span.range_of(&[key("sources"), PathSeg::Index(1)]).unwrap();
         assert_eq!(range.start.line, 5);
         assert_eq!(range.end.line, 6);
 
-        // remote[0].skills[1] is the exact allowlist element.
+        // sources[1].skills[1] is the exact allowlist element.
         let range = span
             .range_of(&[
-                key("remote"),
-                PathSeg::Index(0),
+                key("sources"),
+                PathSeg::Index(1),
                 key("skills"),
                 PathSeg::Index(1),
             ])
@@ -185,9 +189,12 @@ mod tests {
     fn unresolvable_path_falls_back_to_first_line() {
         let span = SpanIndex::new(DOC);
         assert!(span.range_of(&[key("nope")]).is_none());
-        assert!(span.range_of(&[key("remote"), PathSeg::Index(9)]).is_none());
+        assert!(
+            span.range_of(&[key("sources"), PathSeg::Index(9)])
+                .is_none()
+        );
         // Key lookup into an array does not panic.
-        assert!(span.range_of(&[key("remote"), key("x")]).is_none());
+        assert!(span.range_of(&[key("sources"), key("x")]).is_none());
         let fallback = span.range_or_first_line(&[key("nope")]);
         assert_eq!(fallback.start, Position::new(0, 0));
         assert_eq!(fallback.end, Position::new(0, 1));

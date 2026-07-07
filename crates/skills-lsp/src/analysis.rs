@@ -27,7 +27,8 @@ use skills_core::audit::{AuditedSkill, Severity};
 use skills_core::domain::{NoteKind, Origin, ProviderId, ScannedSkill, VendorRef};
 use skills_core::error::MaterializeError;
 use skills_core::lockfile::Lockfile;
-use skills_core::manifest::{Manifest, PathSeg, RemoteEntry};
+use skills_core::manifest::{Manifest, PathSeg, SourceEntry};
+use skills_core::paths::normalize_rel;
 use skills_core::pipeline::ctx::{CACHE_DIR, Ctx, RunOptions};
 use skills_core::pipeline::{plan, resolve, scan, trust};
 use skills_core::traits::{Cache, SkillLocator};
@@ -52,7 +53,7 @@ pub mod codes {
     pub const UNKNOWN_SKILL: &str = "unknown-skill";
     /// Remote donor not present in the local cache (offline analysis).
     pub const NOT_FETCHED: &str = "not-fetched";
-    /// Provider discovery failure (missing local.dir, bad sha256, …).
+    /// Provider discovery failure (missing sources dir path, bad sha256, …).
     pub const DISCOVER: &str = "discover";
     /// Vendor-level materialize/scan problem.
     pub const VENDOR: &str = "vendor";
@@ -63,6 +64,8 @@ pub mod codes {
     /// A donor ships a skill whose directory name is FS-dangerous — the
     /// pipeline aborts on it before any write.
     pub const DANGEROUS_NAME: &str = "dangerous-name";
+    /// Deprecated manifest key still in use (`remote` → `sources`).
+    pub const DEPRECATED: &str = "deprecated";
 }
 
 /// Stable diagnostic codes for `SKILL.md` that are not textcheck codes.
@@ -102,25 +105,38 @@ pub async fn analyze_manifest(project_root: &Path, text: &str) -> Vec<Diagnostic
         }
     };
 
+    let mut diags = Vec::new();
+
+    // Deprecation: `remote` still works as an alias of `sources`, but the
+    // user should rename the key. A warning, not an error — the manifest is
+    // fully functional, so the analysis continues either way.
+    if manifest.uses_deprecated_remote() {
+        diags.push(diag(
+            span.range_or_first_line(&[PathSeg::key("remote")]),
+            DiagnosticSeverity::WARNING,
+            codes::DEPRECATED,
+            "'remote' was renamed to 'sources'; rename the key".to_string(),
+        ));
+    }
+
     // Layer 2 — semantics. A manifest that fails validation would abort the
     // CLI, so the pipeline layer is skipped.
     let issues = manifest.validate_issues();
     if !issues.is_empty() {
-        return issues
-            .into_iter()
-            .map(|issue| {
-                diag(
-                    span.range_or_first_line(&issue.path),
-                    DiagnosticSeverity::ERROR,
-                    codes::INVALID,
-                    issue.message,
-                )
-            })
-            .collect();
+        diags.extend(issues.into_iter().map(|issue| {
+            diag(
+                span.range_or_first_line(&issue.path),
+                DiagnosticSeverity::ERROR,
+                codes::INVALID,
+                issue.message,
+            )
+        }));
+        return diags;
     }
 
     // Layer 3 — pipeline dry analysis.
-    dry_pipeline(project_root, manifest, &span).await
+    diags.extend(dry_pipeline(project_root, manifest, &span).await);
+    diags
 }
 
 /// Analyze a `SKILL.md` buffer. `dir_name` is the skill directory name (the
@@ -292,8 +308,8 @@ async fn dry_pipeline(
     let kept = outcome.into_kept_refs();
 
     // Materialize, cache-only. A donor missing from the cache is a hint on
-    // its remote[] entry, not an error; the donor is left out of the rest of
-    // the analysis and staleness switches to partial mode (no bogus
+    // its sources[] entry, not an error; the donor is left out of the rest
+    // of the analysis and staleness switches to partial mode (no bogus
     // "remove" counts for skills we simply have not fetched).
     let mut vendors = Vec::new();
     let mut missing_donor = false;
@@ -306,7 +322,7 @@ async fn dry_pipeline(
             Err(MaterializeError::NotFetched { vendor }) => {
                 missing_donor = true;
                 diags.push(diag(
-                    remote_entry_range(&ctx.manifest, span, &vendor_ref),
+                    source_entry_range(&ctx.manifest, span, &vendor_ref),
                     DiagnosticSeverity::HINT,
                     codes::NOT_FETCHED,
                     format!("{vendor}: not fetched yet — run `skills update`"),
@@ -315,7 +331,7 @@ async fn dry_pipeline(
             Err(e) => {
                 missing_donor = true;
                 diags.push(diag(
-                    remote_entry_range(&ctx.manifest, span, &vendor_ref),
+                    source_entry_range(&ctx.manifest, span, &vendor_ref),
                     DiagnosticSeverity::WARNING,
                     codes::VENDOR,
                     e.to_string(),
@@ -342,13 +358,16 @@ async fn dry_pipeline(
     // Unknown allowlist names, anchored to the exact array element. Only
     // checked for donors that actually materialized — everything would be
     // "unknown" for a donor we have not fetched.
-    let materialized: HashSet<&str> = vendors.iter().map(|v| v.name.as_str()).collect();
-    for (idx, entry) in ctx.manifest.remote.iter().flatten().enumerate() {
+    let sources_key = ctx.manifest.sources_key();
+    for (idx, entry) in ctx.manifest.sources().iter().enumerate() {
         let Some(names) = &entry.skills else { continue };
-        let donor = remote_identifier(entry);
-        if !materialized.contains(donor) {
+        let Some(donor) = vendors
+            .iter()
+            .map(|v| v.name.as_str())
+            .find(|name| donor_name_matches(entry, name))
+        else {
             continue;
-        }
+        };
         let known: HashSet<&str> = scanned
             .iter()
             .filter(|s| s.vendor.as_str() == donor)
@@ -358,7 +377,7 @@ async fn dry_pipeline(
             if !known.contains(name.as_str()) {
                 diags.push(diag(
                     span.range_or_first_line(&[
-                        PathSeg::key("remote"),
+                        PathSeg::key(sources_key),
                         PathSeg::Index(idx),
                         PathSeg::key("skills"),
                         PathSeg::Index(name_idx),
@@ -371,7 +390,7 @@ async fn dry_pipeline(
         }
     }
 
-    // Resolve: conflicts anchor every involved remote[] entry (dir/composer
+    // Resolve: conflicts anchor every involved sources[] entry (composer
     // donors fall back to the file top). A conflict aborts a real run, so
     // staleness is not reported on top of it.
     match resolve::resolve(scanned, &vendors) {
@@ -392,8 +411,8 @@ async fn dry_pipeline(
                     .vendors
                     .iter()
                     .filter_map(|vendor| {
-                        remote_index_for_name(&ctx.manifest, vendor.as_str())
-                            .and_then(|idx| span.range_of(&remote_path(idx)))
+                        source_index_for_name(&ctx.manifest, vendor.as_str())
+                            .and_then(|idx| span.range_of(&source_path(sources_key, idx)))
                     })
                     .collect();
                 if ranges.is_empty() {
@@ -412,8 +431,8 @@ async fn dry_pipeline(
         }
         Err(skills_core::error::ResolveError::DangerousName(dangerous)) => {
             for danger in dangerous {
-                let range = remote_index_for_name(&ctx.manifest, danger.vendor.as_str())
-                    .and_then(|idx| span.range_of(&remote_path(idx)))
+                let range = source_index_for_name(&ctx.manifest, danger.vendor.as_str())
+                    .and_then(|idx| span.range_of(&source_path(sources_key, idx)))
                     .unwrap_or_else(|| span.first_line());
                 diags.push(diag(
                     range,
@@ -467,33 +486,72 @@ pub fn locator_chain(discovery: bool) -> Vec<Arc<dyn SkillLocator>> {
     ]
 }
 
-fn remote_path(idx: usize) -> Vec<PathSeg> {
-    vec![PathSeg::key("remote"), PathSeg::Index(idx)]
+/// Path of a `sources[]` entry; `key` is [`Manifest::sources_key`] — the
+/// key the document actually uses (`sources`, or the deprecated `remote`).
+fn source_path(key: &str, idx: usize) -> Vec<PathSeg> {
+    vec![PathSeg::key(key), PathSeg::Index(idx)]
 }
 
-/// The manifest identifier of a remote entry (package or url) — also the
-/// vendor name the providers assign to its donor.
-fn remote_identifier(entry: &RemoteEntry) -> &str {
-    entry
-        .package
-        .as_deref()
-        .or(entry.url.as_deref())
-        .unwrap_or_default()
+/// The manifest identifier of a source entry: the `package`/`url` of
+/// by-package/by-url entries (also the vendor name the providers assign to
+/// their donors), the `path` of dir entries.
+fn source_identifier(entry: &SourceEntry) -> &str {
+    if entry.from == "dir" {
+        entry.path.as_deref().unwrap_or_default()
+    } else {
+        entry
+            .package
+            .as_deref()
+            .or(entry.url.as_deref())
+            .unwrap_or_default()
+    }
 }
 
-/// The `remote[]` entry a discovered donor came from, by provider + origin.
-fn remote_index_for(manifest: &Manifest, vendor_ref: &VendorRef) -> Option<usize> {
+/// Whether a donor's vendor name belongs to this entry. By-package/by-url
+/// donors are named after their manifest identifier; dir donors after the
+/// `package` override or `dir/<dirname>` of the normalized path.
+fn donor_name_matches(entry: &SourceEntry, vendor_name: &str) -> bool {
+    if entry.from == "dir" {
+        if let Some(package) = &entry.package {
+            return package == vendor_name;
+        }
+        return entry
+            .path
+            .as_deref()
+            .and_then(|path| normalize_rel(path).ok())
+            .is_some_and(|norm| vendor_name.strip_prefix("dir/") == norm.rsplit('/').next());
+    }
+    source_identifier(entry) == vendor_name
+}
+
+/// The `sources[]` entry a discovered donor came from, by provider + origin.
+fn source_index_for(manifest: &Manifest, vendor_ref: &VendorRef) -> Option<usize> {
+    let entries = manifest.sources();
+    if vendor_ref.provider == ProviderId::Dir {
+        // Dir donors: match the origin path against the entry path, both
+        // normalized like the core uniqueness key (`./a` == `a`).
+        let Origin::Local { path } = &vendor_ref.origin else {
+            return None;
+        };
+        let origin_norm = normalize_rel(path).ok()?;
+        return entries.iter().position(|e| {
+            e.from == "dir"
+                && e.path
+                    .as_deref()
+                    .and_then(|p| normalize_rel(p).ok())
+                    .is_some_and(|norm| norm == origin_norm)
+        });
+    }
     let identifier = match &vendor_ref.origin {
         Origin::Remote { package, .. } => package.as_str(),
         Origin::Url { url } => url.as_str(),
         Origin::Local { .. } => return None,
     };
-    let entries = manifest.remote.as_deref().unwrap_or(&[]);
     let matches: Vec<usize> = entries
         .iter()
         .enumerate()
         .filter(|(_, e)| {
-            remote_identifier(e) == identifier && from_matches(&e.from, vendor_ref.provider)
+            source_identifier(e) == identifier && from_matches(&e.from, vendor_ref.provider)
         })
         .map(|(idx, _)| idx)
         .collect();
@@ -521,14 +579,12 @@ fn remote_index_for(manifest: &Manifest, vendor_ref: &VendorRef) -> Option<usize
     }
 }
 
-/// The `remote[]` entry whose identifier equals a donor's vendor name (the
-/// by-package/by-url providers name donors after their manifest identifier).
-fn remote_index_for_name(manifest: &Manifest, vendor_name: &str) -> Option<usize> {
+/// The `sources[]` entry a donor's vendor name belongs to.
+fn source_index_for_name(manifest: &Manifest, vendor_name: &str) -> Option<usize> {
     manifest
-        .remote
+        .sources()
         .iter()
-        .flatten()
-        .position(|e| remote_identifier(e) == vendor_name)
+        .position(|e| donor_name_matches(e, vendor_name))
 }
 
 fn from_matches(from: &str, provider: ProviderId) -> bool {
@@ -536,28 +592,37 @@ fn from_matches(from: &str, provider: ProviderId) -> bool {
         ProviderId::Github => from == "github",
         ProviderId::Gitlab => from == "gitlab",
         ProviderId::Url => from == "http" || from == "zip",
+        // Dir donors are matched by origin path in `source_index_for`.
         ProviderId::Dir | ProviderId::Composer => false,
     }
 }
 
-/// Best-effort anchor for a remote donor's diagnostics: its `remote[]` entry
-/// span, else the file top.
-fn remote_entry_range(manifest: &Manifest, span: &SpanIndex<'_>, vendor_ref: &VendorRef) -> Range {
-    remote_index_for(manifest, vendor_ref)
-        .and_then(|idx| span.range_of(&remote_path(idx)))
+/// Best-effort anchor for a donor's diagnostics: its `sources[]` entry span,
+/// else the file top.
+fn source_entry_range(manifest: &Manifest, span: &SpanIndex<'_>, vendor_ref: &VendorRef) -> Range {
+    source_index_for(manifest, vendor_ref)
+        .and_then(|idx| span.range_of(&source_path(manifest.sources_key(), idx)))
         .unwrap_or_else(|| span.first_line())
 }
 
-/// Best-effort anchor for discover errors: a quoted local.dir entry in the
-/// message maps to its array element, everything else to the file top.
+/// Best-effort anchor for discover errors: a quoted dir-entry path in the
+/// message maps to that entry's `path` value (falling back to the entry
+/// itself), everything else to the file top.
 fn discover_error_range(manifest: &Manifest, span: &SpanIndex<'_>, message: &str) -> Range {
-    for (idx, dir) in manifest.local_dirs().iter().enumerate() {
-        if message.contains(&format!("'{dir}'")) {
-            return span.range_or_first_line(&[
-                PathSeg::key("local"),
-                PathSeg::key("dir"),
-                PathSeg::Index(idx),
-            ]);
+    let key = manifest.sources_key();
+    for (idx, entry) in manifest.sources().iter().enumerate() {
+        if entry.from != "dir" {
+            continue;
+        }
+        let Some(path) = entry.path.as_deref() else {
+            continue;
+        };
+        if message.contains(&format!("'{path}'")) {
+            let value = [PathSeg::key(key), PathSeg::Index(idx), PathSeg::key("path")];
+            if let Some(range) = span.range_of(&value) {
+                return range;
+            }
+            return span.range_or_first_line(&source_path(key, idx));
         }
     }
     span.first_line()

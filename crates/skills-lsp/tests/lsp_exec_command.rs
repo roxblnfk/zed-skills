@@ -11,7 +11,7 @@ fn stale_project(tmp: &std::path::Path) -> String {
         &tmp.join("skills-src").join("tidy").join("SKILL.md"),
         "---\nname: tidy\ndescription: d\n---\n# Tidy\n",
     );
-    let manifest = "{\n  \"local\": { \"dir\": [\"./skills-src\"] }\n}";
+    let manifest = "{\n  \"sources\": [ { \"from\": \"dir\", \"path\": \"./skills-src\" } ]\n}";
     write_file(&tmp.join("skills.json"), manifest);
     manifest.to_string()
 }
@@ -93,11 +93,11 @@ async fn stale_diagnostic_offers_the_code_action_and_the_command_syncs() {
 #[tokio::test(flavor = "multi_thread")]
 async fn command_failure_is_reported_via_show_message() {
     let tmp = tempfile::tempdir().unwrap();
-    // Manifest referencing a missing local.dir: prepare succeeds, discover
-    // fails — the command must surface an error message, not crash.
+    // Manifest referencing a missing sources dir path: prepare succeeds,
+    // discover fails — the command must surface an error message, not crash.
     write_file(
         &tmp.path().join("skills.json"),
-        "{ \"local\": { \"dir\": [\"./nope\"] } }",
+        "{ \"sources\": [ { \"from\": \"dir\", \"path\": \"./nope\" } ] }",
     );
 
     let mut client = TestClient::start();

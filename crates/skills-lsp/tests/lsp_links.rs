@@ -42,8 +42,8 @@ async fn manifest_links_cover_all_entry_kinds() {
     std::fs::create_dir(tmp.path().join("skills-src")).unwrap();
     let path = tmp.path().join("skills.json");
     let text = r#"{
-  "local": { "dir": ["./skills-src"] },
-  "remote": [
+  "sources": [
+    { "from": "dir", "path": "./skills-src" },
     { "from": "github", "package": "acme/skills" },
     { "from": "gitlab", "package": "org/group/sub/project" },
     { "from": "zip", "url": "https://example.com/skills.zip" }

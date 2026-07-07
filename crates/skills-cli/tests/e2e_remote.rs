@@ -89,7 +89,7 @@ fn write_manifest(project: &Path, host: &str) {
     std::fs::write(
         project.join("skills.json"),
         format!(
-            r#"{{ "remote": [ {{ "from": "github", "package": "acme/skills", "ref": "v1.0.0", "host": "{host}" }} ] }}"#
+            r#"{{ "sources": [ {{ "from": "github", "package": "acme/skills", "ref": "v1.0.0", "host": "{host}" }} ] }}"#
         ),
     )
     .unwrap();
@@ -150,8 +150,11 @@ async fn refresh_flag_redownloads_the_archive() {
     assert_eq!(report.count(SyncAction::Skip), 2, "content did not change");
 }
 
+// Intentionally kept on the legacy `remote` key: proves manifests written
+// against the pre-migration schema still discover and sync end-to-end
+// (the key is read as a deprecated alias for `sources`).
 #[tokio::test]
-async fn remote_allowlist_filters_by_canonical_name() {
+async fn legacy_remote_key_still_syncs_and_filters() {
     let server = MockServer::start().await;
     mount_github_repo(&server).await;
     let project = tempfile::tempdir().unwrap();
@@ -220,7 +223,7 @@ async fn add_gitlab_subgroup_registers_and_syncs() {
     let manifest = std::fs::read_to_string(project.path().join("skills.json")).unwrap();
     let doc: serde_json::Value = serde_json::from_str(&manifest).unwrap();
     assert_eq!(doc["$schema"], skills_core::manifest::SCHEMA_URL);
-    let entry = &doc["remote"][0];
+    let entry = &doc["sources"][0];
     assert_eq!(entry["from"], "gitlab");
     assert_eq!(entry["package"], "org/group/project");
     assert_eq!(entry["ref"], "^1.2.3");
@@ -270,7 +273,7 @@ async fn add_with_explicit_ref_and_skill_filter() {
     assert_eq!(doc["target"], ".agents/skills");
     // Existing manifests are never retrofitted with a $schema key.
     assert!(doc.get("$schema").is_none());
-    let entry = &doc["remote"][0];
+    let entry = &doc["sources"][0];
     // Explicit user ref stored verbatim (no caret derivation).
     assert_eq!(entry["ref"], "main");
     assert_eq!(entry["skills"], serde_json::json!(["code-review"]));
@@ -338,8 +341,9 @@ async fn from_filter_hides_other_providers() {
     std::fs::write(
         project.path().join("skills.json"),
         format!(
-            r#"{{ "local": {{ "dir": ["./local-src"] }},
-                 "remote": [ {{ "from": "github", "package": "acme/skills", "ref": "v1.0.0", "host": "{}" }} ] }}"#,
+            r#"{{ "sources": [
+                 {{ "from": "dir", "path": "./local-src" }},
+                 {{ "from": "github", "package": "acme/skills", "ref": "v1.0.0", "host": "{}" }} ] }}"#,
             server.uri()
         ),
     )
@@ -369,4 +373,104 @@ async fn from_filter_hides_other_providers() {
         .assert()
         .failure()
         .code(1);
+}
+
+// --- deprecated `remote` alias: migration + warning --------------------------
+
+/// Seed a project with a legacy `remote` manifest holding a single dir donor
+/// (network-free), plus the skill it points at.
+fn seed_legacy_remote_dir(project: &Path) {
+    let donor = project.join("local-src");
+    std::fs::create_dir_all(donor.join("local-skill")).unwrap();
+    let mut f = std::fs::File::create(donor.join("local-skill").join("SKILL.md")).unwrap();
+    writeln!(f, "---\nname: local-skill\n---").unwrap();
+    std::fs::write(
+        project.join("skills.json"),
+        r#"{ "remote": [ { "from": "dir", "path": "./local-src" } ] }"#,
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn add_migrates_legacy_remote_key_to_sources() {
+    let server = MockServer::start().await;
+    mount_github_repo(&server).await;
+    let project = tempfile::tempdir().unwrap();
+    // Existing manifest still on the deprecated `remote` key, with a
+    // network-free dir donor that must be preserved across the migration.
+    seed_legacy_remote_dir(project.path());
+
+    skills_cmd(project.path())
+        .args([
+            "add",
+            "github:acme/skills",
+            "--ref",
+            "v1.0.0",
+            "--host",
+            &server.uri(),
+        ])
+        .assert()
+        .success();
+
+    let manifest = std::fs::read_to_string(project.path().join("skills.json")).unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    // `remote` was renamed to `sources`; the old entry is preserved (first)
+    // and the new donor appended.
+    assert!(doc.get("remote").is_none(), "legacy key must be gone");
+    let sources = doc["sources"].as_array().unwrap();
+    assert_eq!(sources.len(), 2, "{manifest}");
+    assert_eq!(sources[0]["from"], "dir");
+    assert_eq!(sources[0]["path"], "./local-src");
+    assert_eq!(sources[1]["from"], "github");
+    assert_eq!(sources[1]["package"], "acme/skills");
+
+    // The migrated manifest still syncs both donors.
+    let target = project.path().join(".agents").join("skills");
+    assert!(target.join("local-skill").join("SKILL.md").is_file());
+    assert!(target.join("code-review").join("SKILL.md").is_file());
+}
+
+#[test]
+fn update_warns_once_on_deprecated_remote_key() {
+    let project = tempfile::tempdir().unwrap();
+    seed_legacy_remote_dir(project.path());
+
+    let assert = skills_cmd(project.path())
+        .args(["update", "--dry-run"])
+        .assert()
+        .success();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains("skills.json uses the deprecated 'remote' key; rename it to 'sources'"),
+        "{stderr}"
+    );
+    assert_eq!(
+        stderr.matches("deprecated 'remote' key").count(),
+        1,
+        "warning must appear exactly once: {stderr}"
+    );
+}
+
+#[test]
+fn update_does_not_warn_when_sources_used() {
+    let project = tempfile::tempdir().unwrap();
+    let donor = project.path().join("local-src");
+    std::fs::create_dir_all(donor.join("local-skill")).unwrap();
+    let mut f = std::fs::File::create(donor.join("local-skill").join("SKILL.md")).unwrap();
+    writeln!(f, "---\nname: local-skill\n---").unwrap();
+    std::fs::write(
+        project.path().join("skills.json"),
+        r#"{ "sources": [ { "from": "dir", "path": "./local-src" } ] }"#,
+    )
+    .unwrap();
+
+    let assert = skills_cmd(project.path())
+        .args(["update", "--dry-run"])
+        .assert()
+        .success();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(
+        !stderr.contains("deprecated 'remote'"),
+        "no deprecation warning expected: {stderr}"
+    );
 }

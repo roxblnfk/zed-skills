@@ -10,8 +10,8 @@
 //!   format, bool/enum values — `fm-*` codes), plus frontmatter completion
 //!   (known keys, bool/enum values, a bootstrap `---` block snippet) and
 //!   hover docs on known frontmatter keys.
-//! - `skills.json` document links: `remote[]` packages → repo web URLs,
-//!   by-url entries → the URL, `local.dir` → the directory.
+//! - `skills.json` document links: `sources[]` packages → repo web URLs,
+//!   by-url entries → the URL, dir-entry paths → the directory.
 //! - Code action "Run skills update" → `workspace/executeCommand`
 //!   `skills.update` runs the real pipeline in-process.
 //! - Source code action "skills: set up gutter tasks" → `skills.setupTasks`

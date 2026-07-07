@@ -225,7 +225,7 @@ pub fn render_show(
     out.push_str(&format!("Target: {target_rel}\n"));
 
     if vendors.is_empty() && skipped.is_empty() {
-        out.push_str("\nNo donors configured (add local.dir entries to skills.json).\n");
+        out.push_str("\nNo donors configured (add sources entries to skills.json).\n");
         return out;
     }
 

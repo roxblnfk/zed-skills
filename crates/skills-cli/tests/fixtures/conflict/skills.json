@@ -1,5 +1,6 @@
 {
-    "local": {
-        "dir": ["./vendor-a", "./vendor-b"]
-    }
+    "sources": [
+        { "from": "dir", "path": "./vendor-a" },
+        { "from": "dir", "path": "./vendor-b" }
+    ]
 }

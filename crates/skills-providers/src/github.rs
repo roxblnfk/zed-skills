@@ -1,4 +1,5 @@
-//! GitHub provider: `remote[]` entries with `from: "github"`.
+//! GitHub provider: `sources[]` entries with `from: "github"` (the
+//! deprecated `remote[]` alias is read too).
 //!
 //! - `package` must be exactly two non-empty segments (`owner/repo`).
 //! - API base: `https://api.github.com` for the public host, `<host>/api/v3`
@@ -81,7 +82,7 @@ impl VendorProvider for GithubProvider {
 
     async fn discover(&self, ctx: &Ctx) -> Result<Vec<VendorRef>, DiscoverError> {
         let mut refs = Vec::new();
-        for entry in ctx.manifest.remote.iter().flatten() {
+        for entry in ctx.manifest.sources().iter() {
             if entry.from != "github" {
                 continue;
             }
@@ -102,7 +103,7 @@ impl VendorProvider for GithubProvider {
                 name: vendor.name().clone(),
                 origin: vendor.origin().clone(),
                 filter: SkillsFilter::from_manifest(entry.skills.clone()),
-                // remote[] entries are user-declared - implicitly trusted.
+                // sources[] entries are user-declared - implicitly trusted.
                 trust: TrustBasis::UserDeclared,
                 status: DonorStatus::Declared,
                 vendor: Arc::new(vendor),
@@ -289,6 +290,8 @@ mod tests {
 
     #[tokio::test]
     async fn discovers_github_entries_only() {
+        // Uses the deprecated `remote` alias — proves it still flows through
+        // discovery.
         let (_tmp, ctx) = ctx(r#"{ "remote": [
                 { "from": "github", "package": "acme/skills", "ref": "v1.0.0" },
                 { "from": "gitlab", "package": "a/b/c" },
@@ -311,7 +314,7 @@ mod tests {
 
     #[tokio::test]
     async fn bad_package_shape_is_a_discover_error() {
-        let (_tmp, ctx) = ctx(r#"{ "remote": [ { "from": "github", "package": "just-one" } ] }"#);
+        let (_tmp, ctx) = ctx(r#"{ "sources": [ { "from": "github", "package": "just-one" } ] }"#);
         let provider = GithubProvider::new(Arc::new(MockHttp::new()), None);
         let err = provider.discover(&ctx).await.unwrap_err();
         assert!(err.to_string().contains("owner/repo"), "{err}");
@@ -320,7 +323,7 @@ mod tests {
     #[tokio::test]
     async fn skills_allowlist_flows_into_the_ref() {
         let (_tmp, ctx) =
-            ctx(r#"{ "remote": [ { "from": "github", "package": "a/b", "skills": ["one"] } ] }"#);
+            ctx(r#"{ "sources": [ { "from": "github", "package": "a/b", "skills": ["one"] } ] }"#);
         let provider = GithubProvider::new(Arc::new(MockHttp::new()), None);
         let refs = provider.discover(&ctx).await.unwrap();
         assert_eq!(refs[0].filter, SkillsFilter::Only(vec!["one".to_string()]));

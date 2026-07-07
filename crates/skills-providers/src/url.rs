@@ -1,4 +1,5 @@
-//! By-url provider: `remote[]` entries with `from: "http" | "zip"`.
+//! By-url provider: `sources[]` entries with `from: "http" | "zip"` (the
+//! deprecated `remote[]` alias is read too).
 //!
 //! Downloads the archive from the literal `url`, optionally verifies its
 //! SHA-256, then runs the same zip handling as the by-package providers.
@@ -40,7 +41,7 @@ impl VendorProvider for UrlProvider {
 
     async fn discover(&self, ctx: &Ctx) -> Result<Vec<VendorRef>, DiscoverError> {
         let mut refs = Vec::new();
-        for entry in ctx.manifest.remote.iter().flatten() {
+        for entry in ctx.manifest.sources().iter() {
             if entry.from != "http" && entry.from != "zip" {
                 continue;
             }
@@ -59,7 +60,7 @@ impl VendorProvider for UrlProvider {
                 name: vendor.name().clone(),
                 origin: vendor.origin().clone(),
                 filter: SkillsFilter::from_manifest(entry.skills.clone()),
-                // remote[] entries are user-declared - implicitly trusted.
+                // sources[] entries are user-declared - implicitly trusted.
                 trust: TrustBasis::UserDeclared,
                 status: DonorStatus::Declared,
                 vendor: Arc::new(vendor),
@@ -208,6 +209,8 @@ mod tests {
 
     #[tokio::test]
     async fn discovers_http_and_zip_entries() {
+        // Uses the deprecated `remote` alias — proves it still flows through
+        // discovery.
         let (_tmp, ctx) = ctx(r#"{ "remote": [
                 { "from": "zip", "url": "https://example.com/a.zip" },
                 { "from": "http", "url": "https://example.com/b" },
@@ -227,8 +230,9 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_sha256_is_a_discover_error() {
-        let (_tmp, ctx) =
-            ctx(r#"{ "remote": [ { "from": "zip", "url": "https://x/a.zip", "sha256": "zz" } ] }"#);
+        let (_tmp, ctx) = ctx(
+            r#"{ "sources": [ { "from": "zip", "url": "https://x/a.zip", "sha256": "zz" } ] }"#,
+        );
         let provider = UrlProvider::new(Arc::new(MockHttp::new()));
         let err = provider.discover(&ctx).await.unwrap_err();
         assert!(err.to_string().contains("64 hex chars"), "{err}");

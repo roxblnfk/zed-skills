@@ -56,15 +56,6 @@
                 "composer": {
                     "type": "boolean"
                 },
-                "dir": {
-                    "description": "Directories whose immediate subdirectories containing SKILL.md are skills. Each entry is one donor.",
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    },
-                    "uniqueItems": true
-                },
                 "npm": {
                     "description": "Reserved.",
                     "type": "boolean"
@@ -75,79 +66,26 @@
                 }
             }
         },
-        "remote": {
-            "description": "Remote donors: by-package (github/gitlab) or by-url (http/zip).",
+        "sources": {
+            "description": "Explicit donor sources: by-package (github/gitlab), by-url (http/zip) or a local directory (dir).",
             "type": "array",
             "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "from": {
-                        "enum": ["github", "gitlab", "http", "zip"]
-                    },
-                    "package": {
-                        "type": "string",
-                        "minLength": 1
-                    },
-                    "url": {
-                        "type": "string",
-                        "minLength": 1
-                    },
-                    "host": {
-                        "type": "string",
-                        "minLength": 1
-                    },
-                    "ref": {
-                        "type": "string",
-                        "minLength": 1
-                    },
-                    "sha256": {
-                        "type": "string"
-                    },
-                    "skills": {
-                        "description": "Tri-state: absent/null = all skills; [] = donor registered, pulls nothing; non-empty = allowlist matched by canonical skill name.",
-                        "type": ["array", "null"],
-                        "items": {
-                            "type": "string",
-                            "minLength": 1
-                        }
-                    }
-                },
-                "required": ["from"],
-                "allOf": [
-                    {
-                        "if": {
-                            "properties": {
-                                "from": {
-                                    "enum": ["github", "gitlab"]
-                                }
-                            }
-                        },
-                        "then": {
-                            "required": ["package"],
-                            "properties": {
-                                "url": false,
-                                "sha256": false
-                            }
-                        }
-                    },
-                    {
-                        "if": {
-                            "properties": {
-                                "from": {
-                                    "enum": ["http", "zip"]
-                                }
-                            }
-                        },
-                        "then": {
-                            "required": ["url"],
-                            "properties": {
-                                "package": false,
-                                "host": false,
-                                "ref": false
-                            }
-                        }
-                    }
+                "oneOf": [
+                    { "$ref": "#/$defs/sourceByPackage" },
+                    { "$ref": "#/$defs/sourceByUrl" },
+                    { "$ref": "#/$defs/sourceByDir" }
+                ]
+            }
+        },
+        "remote": {
+            "deprecated": true,
+            "description": "Renamed to sources; read as a deprecated alias.",
+            "type": "array",
+            "items": {
+                "oneOf": [
+                    { "$ref": "#/$defs/sourceByPackage" },
+                    { "$ref": "#/$defs/sourceByUrl" },
+                    { "$ref": "#/$defs/sourceByDir" }
                 ]
             }
         },
@@ -239,6 +177,102 @@
             "description": "Monorepo re-anchor: relative path with plain segments only (no '.'/'..').",
             "type": "string",
             "minLength": 1
+        }
+    },
+    "not": {
+        "required": ["sources", "remote"]
+    },
+    "$defs": {
+        "sourceByPackage": {
+            "type": "object",
+            "description": "Donor source entry for name-based adapters (github, gitlab).",
+            "additionalProperties": false,
+            "required": ["from", "package"],
+            "properties": {
+                "from": {
+                    "enum": ["github", "gitlab"]
+                },
+                "package": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Repository identifier, e.g. owner/repo (GitLab: group/subgroup/project)."
+                },
+                "host": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Self-hosted instance (GitHub Enterprise, self-hosted GitLab). Absent = the public host."
+                },
+                "ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Version pin: tag, branch or commit SHA. Absent = latest stable tag, falling back to the default branch HEAD."
+                },
+                "skills": {
+                    "description": "Tri-state: absent/null = all skills; [] = donor registered, pulls nothing; non-empty = allowlist matched by canonical skill name.",
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "sourceByUrl": {
+            "type": "object",
+            "description": "Donor source entry for URL-based adapters (http, zip).",
+            "additionalProperties": false,
+            "required": ["from", "url"],
+            "properties": {
+                "from": {
+                    "enum": ["http", "zip"]
+                },
+                "url": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Archive URL to download."
+                },
+                "sha256": {
+                    "type": "string",
+                    "description": "Optional integrity hash of the downloaded archive."
+                },
+                "skills": {
+                    "description": "Tri-state: absent/null = all skills; [] = donor registered, pulls nothing; non-empty = allowlist matched by canonical skill name.",
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "sourceByDir": {
+            "type": "object",
+            "description": "Donor source entry for the path-based adapter (dir): a local directory declared as an explicit donor.",
+            "additionalProperties": false,
+            "required": ["from", "path"],
+            "properties": {
+                "from": {
+                    "enum": ["dir"]
+                },
+                "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Directory path, relative to the project root and confined to it: absolute paths (including Windows drive letters) and escaping '..' segments are rejected."
+                },
+                "package": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Optional donor vendor-name override."
+                },
+                "skills": {
+                    "description": "Tri-state: absent/null = all skills; [] = donor registered, pulls nothing; non-empty = allowlist matched by canonical skill name.",
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
         }
     }
 }

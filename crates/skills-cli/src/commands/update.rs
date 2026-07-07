@@ -39,6 +39,12 @@ pub async fn run(
     )
     .map_err(skills_core::error::PipelineError::from)?;
 
+    // One-shot deprecation hint: the manifest still relies on the legacy
+    // `remote` key (never emitted when `sources` is used).
+    if ctx.manifest.uses_deprecated_remote() {
+        eprintln!("warning: skills.json uses the deprecated 'remote' key; rename it to 'sources'");
+    }
+
     let providers = super::providers(from.as_deref())?;
     let locators = super::locators(ctx.discovery_enabled());
     let chain = super::audit_chain(&ctx.manifest)?;

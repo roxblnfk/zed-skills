@@ -53,7 +53,10 @@ async fn conflict_between_two_dir_donors_is_an_error() {
     }
     let manifest = concat!(
         "{\n",
-        "  \"local\": { \"dir\": [\"./a-skills\", \"./b-skills\"] }\n",
+        "  \"sources\": [\n",
+        "    { \"from\": \"dir\", \"path\": \"./a-skills\" },\n",
+        "    { \"from\": \"dir\", \"path\": \"./b-skills\" }\n",
+        "  ]\n",
         "}",
     );
     let (mut client, uri) = open_manifest(tmp.path(), manifest).await;
@@ -68,7 +71,7 @@ async fn stale_lockfile_is_an_info_on_the_file_top() {
         &tmp.path().join("skills-src").join("tidy").join("SKILL.md"),
         "---\nname: tidy\ndescription: d\n---\n",
     );
-    let manifest = "{\n  \"local\": { \"dir\": [\"./skills-src\"] }\n}";
+    let manifest = "{\n  \"sources\": [ { \"from\": \"dir\", \"path\": \"./skills-src\" } ]\n}";
     let (mut client, uri) = open_manifest(tmp.path(), manifest).await;
     let diags = client.wait_diagnostics(&uri).await;
     insta::assert_json_snapshot!("stale_lock", simplify(&diags));
@@ -94,7 +97,7 @@ async fn unknown_allowlist_name_warns_on_the_exact_element() {
 
     let manifest = concat!(
         "{\n",
-        "  \"remote\": [\n",
+        "  \"sources\": [\n",
         "    { \"from\": \"github\", \"package\": \"acme/skills\", \"ref\": \"v1.0.0\",\n",
         "      \"skills\": [\"alpha\", \"ghost\"] }\n",
         "  ]\n",
@@ -110,7 +113,7 @@ async fn remote_not_in_cache_is_a_not_fetched_hint() {
     let tmp = tempfile::tempdir().unwrap();
     let manifest = concat!(
         "{\n",
-        "  \"remote\": [\n",
+        "  \"sources\": [\n",
         "    { \"from\": \"github\", \"package\": \"acme/skills\", \"ref\": \"v1.0.0\" }\n",
         "  ]\n",
         "}",
@@ -118,6 +121,36 @@ async fn remote_not_in_cache_is_a_not_fetched_hint() {
     let (mut client, uri) = open_manifest(tmp.path(), manifest).await;
     let diags = client.wait_diagnostics(&uri).await;
     insta::assert_json_snapshot!("not_fetched", simplify(&diags));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deprecated_remote_alias_warns_and_still_analyzes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let manifest = concat!(
+        "{\n",
+        "  \"remote\": [\n",
+        "    { \"from\": \"github\", \"package\": \"acme/skills\", \"ref\": \"v1.0.0\" }\n",
+        "  ]\n",
+        "}",
+    );
+    let (mut client, uri) = open_manifest(tmp.path(), manifest).await;
+    let diags = client.wait_diagnostics(&uri).await;
+    insta::assert_json_snapshot!("deprecated_remote", simplify(&diags));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn missing_dir_source_error_is_anchored_at_its_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let manifest = concat!(
+        "{\n",
+        "  \"sources\": [\n",
+        "    { \"from\": \"dir\", \"path\": \"./nope\" }\n",
+        "  ]\n",
+        "}",
+    );
+    let (mut client, uri) = open_manifest(tmp.path(), manifest).await;
+    let diags = client.wait_diagnostics(&uri).await;
+    insta::assert_json_snapshot!("missing_dir_source", simplify(&diags));
 }
 
 #[tokio::test(flavor = "multi_thread")]

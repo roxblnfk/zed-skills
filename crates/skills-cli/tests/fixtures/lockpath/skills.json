@@ -1,7 +1,7 @@
 {
     "target": ".agents/skills",
     "lock-file": ".agents/skills.lock",
-    "local": {
-        "dir": ["./skills-src"]
-    }
+    "sources": [
+        { "from": "dir", "path": "./skills-src" }
+    ]
 }

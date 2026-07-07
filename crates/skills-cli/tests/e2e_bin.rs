@@ -195,7 +195,7 @@ fn missing_local_dir_is_provider_error_exit_4() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join("skills.json"),
-        r#"{ "local": { "dir": ["./missing"] } }"#,
+        r#"{ "sources": [ { "from": "dir", "path": "./missing" } ] }"#,
     )
     .unwrap();
     skills_cmd(tmp.path())

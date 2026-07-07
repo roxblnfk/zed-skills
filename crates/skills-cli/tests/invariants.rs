@@ -56,12 +56,12 @@ fn runtime_project(donors: &[(&str, &[&str])]) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     let dirs = donors
         .iter()
-        .map(|(donor, _)| format!("\"./{donor}\""))
+        .map(|(donor, _)| format!("{{ \"from\": \"dir\", \"path\": \"./{donor}\" }}"))
         .collect::<Vec<_>>()
         .join(", ");
     std::fs::write(
         tmp.path().join("skills.json"),
-        format!("{{ \"local\": {{ \"dir\": [{dirs}] }} }}\n"),
+        format!("{{ \"sources\": [{dirs}] }}\n"),
     )
     .unwrap();
     for (donor, skills) in donors {

@@ -13,7 +13,7 @@ async fn external_lockfile_removal_refreshes_diagnostics() {
         &tmp.path().join("skills-src").join("tidy").join("SKILL.md"),
         "---\nname: tidy\ndescription: d\n---\n",
     );
-    let manifest = "{\n  \"local\": { \"dir\": [\"./skills-src\"] }\n}";
+    let manifest = "{\n  \"sources\": [ { \"from\": \"dir\", \"path\": \"./skills-src\" } ]\n}";
     write_file(&tmp.path().join("skills.json"), manifest);
 
     // Bring the project in sync first (real pipeline, local donor only).

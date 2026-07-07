@@ -13,7 +13,7 @@
 //!    run to matching donors; naming a donor is an implicit trust grant.
 //! 4. Everything else must clear the effective trust list:
 //!    `trusted-replace: true` ? (project ∪ --trust) : (builtin ∪ project ∪
-//!    --trust). User-declared donors (`local.dir`, `remote[]`) and direct
+//!    --trust). User-declared donors (`sources[]`, incl. `dir` entries) and direct
 //!    dependencies (unless `trusted-replace`) bypass the list. Untrusted
 //!    transitive donors are silently skipped and surfaced in the trailing
 //!    `[skip]` block.

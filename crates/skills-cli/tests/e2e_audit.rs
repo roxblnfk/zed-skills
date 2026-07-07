@@ -28,12 +28,12 @@ fn stderr_of(assert: assert_cmd::assert::Assert) -> String {
 fn write_manifest(project: &std::path::Path, dirs: &[&str], audit: &str) {
     let dirs = dirs
         .iter()
-        .map(|d| format!("\"{d}\""))
+        .map(|d| format!(r#"{{ "from": "dir", "path": "{d}" }}"#))
         .collect::<Vec<_>>()
         .join(", ");
     std::fs::write(
         project.join("skills.json"),
-        format!(r#"{{ "local": {{ "dir": [{dirs}] }}, "audit": {audit} }}"#),
+        format!(r#"{{ "sources": [{dirs}], "audit": {audit} }}"#),
     )
     .unwrap();
 }

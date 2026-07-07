@@ -1,7 +1,7 @@
 {
     "target": ".agents/skills",
     "aliases": [".claude/skills", ".cursor/skills"],
-    "local": {
-        "dir": ["./skills-src"]
-    }
+    "sources": [
+        { "from": "dir", "path": "./skills-src" }
+    ]
 }

@@ -61,7 +61,7 @@ pub enum ProviderId {
     Composer,
     Github,
     Gitlab,
-    /// By-url remote entries (`from: http|zip`).
+    /// By-url source entries (`from: http|zip`).
     Url,
 }
 
@@ -140,8 +140,8 @@ impl SkillsFilter {
 /// (SPEC §8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrustBasis {
-    /// Declared by the user in `skills.json` (`local.dir`, `remote[]`).
-    /// Implicitly trusted — the user typed it.
+    /// Declared by the user in `skills.json` (`sources[]`, incl. `dir`
+    /// entries). Implicitly trusted — the user typed it.
     UserDeclared,
     /// Direct dependency of the root project (`require` / `require-dev`).
     /// Implicitly trusted unless `trusted-replace: true`.
@@ -169,7 +169,7 @@ pub enum DonorStatus {
 /// locator chain which strategies apply (SPEC §6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceHint {
-    /// `local.dir` donors: the vendor root itself is the skills root.
+    /// `dir` source donors: the vendor root itself is the skills root.
     ExplicitRoot,
     /// Composer donors with a validated `extra.skills.source` (normalized
     /// `/`-separated path relative to the package root).

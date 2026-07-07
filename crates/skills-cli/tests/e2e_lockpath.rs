@@ -90,7 +90,7 @@ fn moving_the_option_ignores_the_old_root_lock() {
     let project = fixture_project("lockpath");
     std::fs::write(
         project.path().join("skills.json"),
-        r#"{ "target": ".agents/skills", "local": { "dir": ["./skills-src"] } }"#,
+        r#"{ "target": ".agents/skills", "sources": [ { "from": "dir", "path": "./skills-src" } ] }"#,
     )
     .unwrap();
     skills_cmd(project.path()).arg("update").assert().success();
@@ -104,9 +104,9 @@ fn moving_the_option_ignores_the_old_root_lock() {
         r#"{
     "target": ".agents/skills",
     "lock-file": ".agents/skills.lock",
-    "local": {
-        "dir": ["./skills-src"]
-    }
+    "sources": [
+        { "from": "dir", "path": "./skills-src" }
+    ]
 }
 "#,
     )
@@ -129,7 +129,7 @@ fn lock_file_equal_to_target_is_config_error() {
     let project = fixture_project("lockpath");
     std::fs::write(
         project.path().join("skills.json"),
-        r#"{ "target": ".agents/skills", "lock-file": ".agents/skills", "local": { "dir": ["./skills-src"] } }"#,
+        r#"{ "target": ".agents/skills", "lock-file": ".agents/skills", "sources": [ { "from": "dir", "path": "./skills-src" } ] }"#,
     )
     .unwrap();
     let assert = skills_cmd(project.path())
@@ -151,7 +151,7 @@ fn lock_file_escaping_root_is_config_error() {
     let project = fixture_project("lockpath");
     std::fs::write(
         project.path().join("skills.json"),
-        r#"{ "lock-file": "../skills.lock", "local": { "dir": ["./skills-src"] } }"#,
+        r#"{ "lock-file": "../skills.lock", "sources": [ { "from": "dir", "path": "./skills-src" } ] }"#,
     )
     .unwrap();
     let assert = skills_cmd(project.path())

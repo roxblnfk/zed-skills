@@ -1,11 +1,13 @@
-//! `DirProvider` — donors declared as plain directories via
-//! `local.dir: ["path"]` in the manifest.
+//! `DirProvider` — donors declared as `sources[]` entries with
+//! `from: "dir"`.
 //!
-//! Each declared path is one vendor whose skills root is the directory
-//! itself: every immediate subdirectory containing `SKILL.md` is a skill.
-//! Vendor name: `dir/<dirname>`. Materialization is a no-op (Local origin).
+//! Each entry's `path` (relative to the project root, confined to it) is one
+//! vendor whose skills root is the directory itself: every immediate
+//! subdirectory containing `SKILL.md` is a skill. Vendor name: the entry's
+//! `package` override if set, else `dir/<dirname>`. Materialization is a
+//! no-op (Local origin).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -29,62 +31,107 @@ impl VendorProvider for DirProvider {
 
     async fn discover(&self, ctx: &Ctx) -> Result<Vec<VendorRef>, DiscoverError> {
         let mut refs: Vec<VendorRef> = Vec::new();
-        for declared in ctx.manifest.local_dirs() {
-            let root = join_declared(&ctx.project_root, declared);
+        for entry in ctx.manifest.sources().iter().filter(|e| e.from == "dir") {
+            // Manifest validation guarantees `path` is present for dir
+            // sources; default to "" defensively.
+            let declared = entry.path.clone().unwrap_or_default();
+            let root = join_declared(&ctx.project_root, &declared);
             if !root.is_dir() {
                 return Err(DiscoverError::Provider {
                     provider: self.id(),
-                    message: format!("local.dir path does not exist: '{declared}'"),
+                    message: format!("sources dir path does not exist: '{declared}'"),
                 });
             }
-            let Some(dir_name) = root.file_name() else {
-                return Err(DiscoverError::Provider {
+            // Defense in depth: manifest validation already rejected lexical
+            // escapes (absolute paths, `..`). Canonicalize both sides and
+            // confirm containment to catch symlink/junction escapes that
+            // lexical normalization cannot see.
+            ensure_within_root(&ctx.project_root, &root, &declared).map_err(|message| {
+                DiscoverError::Provider {
                     provider: self.id(),
-                    message: format!("local.dir path has no directory name: '{declared}'"),
-                });
+                    message,
+                }
+            })?;
+
+            let name = match &entry.package {
+                Some(package) => VendorName::new(package),
+                None => {
+                    let Some(dir_name) = root.file_name() else {
+                        return Err(DiscoverError::Provider {
+                            provider: self.id(),
+                            message: format!(
+                                "sources dir path has no directory name: '{declared}'"
+                            ),
+                        });
+                    };
+                    VendorName::new(format!("dir/{}", dir_name.to_string_lossy()))
+                }
             };
-            let name = VendorName::new(format!("dir/{}", dir_name.to_string_lossy()));
             if refs.iter().any(|r| r.name == name) {
                 return Err(DiscoverError::Provider {
                     provider: self.id(),
                     message: format!(
-                        "two local.dir entries resolve to the same vendor name '{name}'"
+                        "two sources dir entries resolve to the same vendor name '{name}'"
                     ),
                 });
             }
             let origin = Origin::Local {
                 path: declared.clone(),
             };
+            let filter = SkillsFilter::from_manifest(entry.skills.clone());
             refs.push(VendorRef {
                 provider: self.id(),
                 name: name.clone(),
                 origin: origin.clone(),
-                // local.dir entries have no per-donor allowlist syntax.
-                filter: SkillsFilter::All,
+                filter: filter.clone(),
                 // Declared by the user in skills.json — implicitly trusted.
                 trust: TrustBasis::UserDeclared,
                 status: DonorStatus::Declared,
-                vendor: Arc::new(DirVendor { name, origin, root }),
+                vendor: Arc::new(DirVendor {
+                    name,
+                    origin,
+                    root,
+                    filter,
+                }),
             });
         }
         Ok(refs)
     }
 }
 
-/// A single `local.dir` donor. Already on disk, so materialization only
+/// Canonicalize `dir` and `project_root` and confirm the directory sits
+/// inside the project root. On Windows both sides carry the `\\?\` verbatim
+/// prefix, so the `starts_with` comparison stays consistent.
+fn ensure_within_root(project_root: &Path, dir: &Path, declared: &str) -> Result<(), String> {
+    let canonical_root = std::fs::canonicalize(project_root)
+        .map_err(|e| format!("cannot resolve the project root: {e}"))?;
+    let canonical_dir = std::fs::canonicalize(dir)
+        .map_err(|e| format!("sources dir path cannot be resolved: '{declared}': {e}"))?;
+    if canonical_dir.starts_with(&canonical_root) {
+        Ok(())
+    } else {
+        Err(format!(
+            "sources dir path escapes the project root: '{declared}'"
+        ))
+    }
+}
+
+/// A single `dir` source donor. Already on disk, so materialization only
 /// verifies the directory still exists.
 pub struct DirVendor {
     name: VendorName,
     origin: Origin,
     root: PathBuf,
+    filter: SkillsFilter,
 }
 
 impl DirVendor {
-    pub fn new(name: VendorName, declared: String, root: PathBuf) -> Self {
+    pub fn new(name: VendorName, declared: String, root: PathBuf, filter: SkillsFilter) -> Self {
         DirVendor {
             name,
             origin: Origin::Local { path: declared },
             root,
+            filter,
         }
     }
 }
@@ -116,7 +163,7 @@ impl Vendor for DirVendor {
             origin: self.origin.clone(),
             root: self.root.clone(),
             ref_resolved: None,
-            filter: SkillsFilter::All,
+            filter: self.filter.clone(),
             source_hint: SourceHint::ExplicitRoot,
         })
     }
@@ -140,7 +187,12 @@ mod tests {
 
     #[tokio::test]
     async fn discovers_one_vendor_per_dir_entry() {
-        let tmp = project(r#"{ "local": { "dir": ["./skills-src", "./more"] } }"#);
+        let tmp = project(
+            r#"{ "sources": [
+                { "from": "dir", "path": "./skills-src" },
+                { "from": "dir", "path": "./more" }
+            ] }"#,
+        );
         std::fs::create_dir_all(tmp.path().join("skills-src")).unwrap();
         std::fs::create_dir_all(tmp.path().join("more")).unwrap();
         let refs = DirProvider.discover(&ctx(&tmp)).await.unwrap();
@@ -157,21 +209,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_local_dir_yields_no_vendors() {
+    async fn no_dir_sources_yields_no_vendors() {
         let tmp = project("{}");
         assert!(DirProvider.discover(&ctx(&tmp)).await.unwrap().is_empty());
     }
 
     #[tokio::test]
+    async fn non_dir_sources_are_ignored() {
+        // A legacy `remote` manifest with github entries yields no dir donors
+        // and does not error.
+        let tmp = project(r#"{ "remote": [ { "from": "github", "package": "a/b" } ] }"#);
+        assert!(DirProvider.discover(&ctx(&tmp)).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn missing_dir_is_a_provider_error() {
-        let tmp = project(r#"{ "local": { "dir": ["./nope"] } }"#);
+        let tmp = project(r#"{ "sources": [ { "from": "dir", "path": "./nope" } ] }"#);
         let err = DirProvider.discover(&ctx(&tmp)).await.unwrap_err();
         assert!(err.to_string().contains("./nope"), "{err}");
+        assert!(err.to_string().contains("does not exist"), "{err}");
     }
 
     #[tokio::test]
     async fn colliding_vendor_names_rejected() {
-        let tmp = project(r#"{ "local": { "dir": ["./a/skills", "./b/skills"] } }"#);
+        let tmp = project(
+            r#"{ "sources": [
+                { "from": "dir", "path": "./a/skills" },
+                { "from": "dir", "path": "./b/skills" }
+            ] }"#,
+        );
         std::fs::create_dir_all(tmp.path().join("a").join("skills")).unwrap();
         std::fs::create_dir_all(tmp.path().join("b").join("skills")).unwrap();
         let err = DirProvider.discover(&ctx(&tmp)).await.unwrap_err();
@@ -179,15 +245,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn package_override_sets_the_vendor_name() {
+        let tmp = project(
+            r#"{ "sources": [
+                { "from": "dir", "path": "./skills-src", "package": "acme/local" }
+            ] }"#,
+        );
+        std::fs::create_dir_all(tmp.path().join("skills-src")).unwrap();
+        let refs = DirProvider.discover(&ctx(&tmp)).await.unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].name.as_str(), "acme/local");
+    }
+
+    #[tokio::test]
+    async fn skills_allowlist_lands_in_the_filter() {
+        let tmp = project(
+            r#"{ "sources": [
+                { "from": "dir", "path": "./skills-src", "skills": ["one", "two"] }
+            ] }"#,
+        );
+        std::fs::create_dir_all(tmp.path().join("skills-src")).unwrap();
+        let refs = DirProvider.discover(&ctx(&tmp)).await.unwrap();
+        let expected = SkillsFilter::Only(vec!["one".to_string(), "two".to_string()]);
+        // Filter lands on the VendorRef...
+        assert_eq!(refs[0].filter, expected);
+        // ...and threads through materialize onto the MaterializedVendor.
+        let cache = Cache::new(tmp.path().join(".skills-cache"));
+        let mv = refs[0].vendor.materialize(&cache).await.unwrap();
+        assert_eq!(mv.filter, expected);
+    }
+
+    #[tokio::test]
     async fn materialize_is_noop_returning_the_dir() {
-        let tmp = project(r#"{ "local": { "dir": ["./src"] } }"#);
+        let tmp = project(r#"{ "sources": [ { "from": "dir", "path": "./src" } ] }"#);
         std::fs::create_dir_all(tmp.path().join("src")).unwrap();
         let refs = DirProvider.discover(&ctx(&tmp)).await.unwrap();
         let cache = Cache::new(tmp.path().join(".skills-cache"));
         let mv = refs[0].vendor.materialize(&cache).await.unwrap();
         assert_eq!(mv.root, tmp.path().join("src"));
         assert_eq!(mv.ref_resolved, None);
+        assert_eq!(mv.filter, SkillsFilter::All);
         // No cache dir created for local vendors.
         assert!(!cache.root.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlink_escaping_the_root_is_rejected() {
+        // A dir source that lexically stays inside the root but is a symlink
+        // pointing outside must be rejected by the canonicalize check.
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(outside.path().join("secret")).unwrap();
+        let tmp = project(r#"{ "sources": [ { "from": "dir", "path": "./link" } ] }"#);
+        std::os::unix::fs::symlink(outside.path().join("secret"), tmp.path().join("link")).unwrap();
+        let err = DirProvider.discover(&ctx(&tmp)).await.unwrap_err();
+        assert!(
+            err.to_string().contains("escapes the project root"),
+            "{err}"
+        );
     }
 }
