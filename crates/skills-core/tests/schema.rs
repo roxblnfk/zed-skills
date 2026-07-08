@@ -41,10 +41,8 @@ fn schema_top_level_properties_match_serde_model() {
         "target",
         "aliases",
         "lock-file",
-        "trusted",
-        "trusted-replace",
         "discovery",
-        "local",
+        "dependencies",
         "sources",
         "remote",
         "audit",
@@ -60,10 +58,12 @@ fn schema_top_level_properties_match_serde_model() {
         "target": "t/skills",
         "aliases": ["a/skills"],
         "lock-file": "meta/skills.lock",
-        "trusted": ["v/p"],
-        "trusted-replace": true,
         "discovery": true,
-        "local": { "composer": false, "npm": true, "go": true },
+        "dependencies": {
+            "composer": { "enabled": false, "trusted": ["v/p"], "trusted-replace": true },
+            "npm": true,
+            "go": { "trusted": ["github.com/owner/*"] }
+        },
         "sources": [
             { "from": "github", "package": "a/b", "ref": "v1", "host": "h", "skills": [] },
             { "from": "zip", "url": "https://example.com/s.zip", "sha256": "abc" },
@@ -77,6 +77,59 @@ fn schema_top_level_properties_match_serde_model() {
         "path-from-root": "pkg/app"
     }"#;
     Manifest::parse(doc).unwrap();
+}
+
+/// The legacy trust/local surface is a hard break: the schema must not carry
+/// `trusted`, `trusted-replace` or `local` top-level properties anymore.
+#[test]
+fn schema_dropped_legacy_trust_and_local_properties() {
+    let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
+    let props = schema["properties"].as_object().unwrap();
+    assert!(!props.contains_key("trusted"));
+    assert!(!props.contains_key("trusted-replace"));
+    assert!(!props.contains_key("local"));
+    // The block that replaced them exists with a locked manager vocabulary.
+    let dep_props = schema["properties"]["dependencies"]["properties"]
+        .as_object()
+        .unwrap();
+    let mut ids: Vec<&str> = dep_props.keys().map(String::as_str).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["composer", "go", "npm"]);
+    assert_eq!(
+        schema["properties"]["dependencies"]["additionalProperties"],
+        false
+    );
+    // Only composer's trusted items carry the vendor/package pattern.
+    assert_eq!(
+        schema["$defs"]["composerDependencyConfig"]["properties"]["trusted"]["items"]["pattern"],
+        "^[^/]+/[^/]+$"
+    );
+    assert!(
+        schema["$defs"]["dependencyManagerConfig"]["properties"]["trusted"]["items"]
+            .get("pattern")
+            .is_none()
+    );
+}
+
+/// The serde model must accept every dependency-entry shape the schema allows
+/// (bool + object forms) and reject what it forbids (unknown manager id,
+/// unknown object field).
+#[test]
+fn schema_dependency_entry_matrix_matches_model() {
+    // Bool short form.
+    Manifest::parse(r#"{ "dependencies": { "composer": true, "npm": false } }"#).unwrap();
+    // Object form, per manager.
+    Manifest::parse(
+        r#"{ "dependencies": {
+            "composer": { "enabled": true, "trusted": ["a/b"], "trusted-replace": false },
+            "npm": { "trusted": ["lodash", "@scope/*"] },
+            "go": { "enabled": true, "trusted": ["github.com/owner/mod"] }
+        } }"#,
+    )
+    .unwrap();
+    // Unknown manager id and unknown object field are rejected.
+    assert!(Manifest::parse(r#"{ "dependencies": { "cargo": true } }"#).is_err());
+    assert!(Manifest::parse(r#"{ "dependencies": { "composer": { "enable": true } } }"#).is_err());
 }
 
 /// The deprecated `remote` alias must still parse (back-compat manifests).

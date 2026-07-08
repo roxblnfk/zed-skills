@@ -119,9 +119,12 @@ fn naming_untrusted_vendor_positionally_trusts_it_silently() {
 }
 
 #[test]
-fn project_trusted_wildcard_unlocks_transitive_vendor() {
+fn dependencies_composer_trusted_wildcard_unlocks_transitive_vendor() {
     let project = fixture_project("sandbox");
-    set_manifest(project.path(), r#"{ "trusted": ["evil/*"] }"#);
+    set_manifest(
+        project.path(),
+        r#"{ "dependencies": { "composer": { "trusted": ["evil/*"] } } }"#,
+    );
     let out = stdout_of(skills_cmd(project.path()).arg("update").assert().success());
     assert_eq!(
         target_entries(project.path()),
@@ -142,7 +145,10 @@ fn project_trusted_wildcard_unlocks_transitive_vendor() {
 #[test]
 fn direct_dependency_is_implicitly_trusted_without_any_pattern() {
     let project = fixture_project("sandbox");
-    set_manifest(project.path(), r#"{ "trusted": [] }"#);
+    set_manifest(
+        project.path(),
+        r#"{ "dependencies": { "composer": { "trusted": [] } } }"#,
+    );
     skills_cmd(project.path()).arg("update").assert().success();
     assert!(has_skill(project.path(), "code-review"));
     assert!(has_skill(project.path(), "refactor"));
@@ -159,7 +165,10 @@ fn transitive_dependency_stays_skipped_without_pattern() {
 #[test]
 fn builtin_list_is_active_when_replace_is_false() {
     let project = fixture_project("sandbox");
-    set_manifest(project.path(), r#"{ "trusted": [] }"#);
+    set_manifest(
+        project.path(),
+        r#"{ "dependencies": { "composer": { "trusted": [] } } }"#,
+    );
     skills_cmd(project.path()).arg("update").assert().success();
     // spiral/* is on the builtin list; the donor is transitive.
     assert!(has_skill(project.path(), "demo"));
@@ -170,7 +179,7 @@ fn trusted_replace_disables_builtin_and_direct_dep_trust() {
     let project = fixture_project("sandbox");
     set_manifest(
         project.path(),
-        r#"{ "trusted": [], "trusted-replace": true }"#,
+        r#"{ "dependencies": { "composer": { "trusted": [], "trusted-replace": true } } }"#,
     );
     skills_cmd(project.path()).arg("update").assert().success();
     assert_eq!(target_entries(project.path()), Vec::<String>::new());
@@ -181,10 +190,40 @@ fn trusted_replace_limits_trust_to_project_list_exactly() {
     let project = fixture_project("sandbox");
     set_manifest(
         project.path(),
-        r#"{ "trusted": ["acme/skills-basic"], "trusted-replace": true }"#,
+        r#"{ "dependencies": { "composer": { "trusted": ["acme/skills-basic"], "trusted-replace": true } } }"#,
     );
     skills_cmd(project.path()).arg("update").assert().success();
     assert_eq!(target_entries(project.path()), ["code-review", "greeting"]);
+}
+
+#[test]
+fn legacy_trusted_key_is_a_config_error() {
+    // The old top-level `trusted`/`local` keys were removed with no back-compat
+    // (hard break): they are fatal unknown fields, not silently migrated.
+    let project = fixture_project("sandbox");
+    set_manifest(project.path(), r#"{ "trusted": ["acme/*"] }"#);
+    let assert = skills_cmd(project.path())
+        .arg("update")
+        .assert()
+        .failure()
+        .code(1);
+    let stderr = stderr_of(assert);
+    assert!(stderr.contains("unknown field"), "{stderr}");
+    assert!(!project.path().join(".agents").exists());
+}
+
+#[test]
+fn legacy_local_key_is_a_config_error() {
+    let project = fixture_project("sandbox");
+    set_manifest(project.path(), r#"{ "local": { "composer": false } }"#);
+    let assert = skills_cmd(project.path())
+        .arg("update")
+        .assert()
+        .failure()
+        .code(1);
+    let stderr = stderr_of(assert);
+    assert!(stderr.contains("unknown field"), "{stderr}");
+    assert!(!project.path().join(".agents").exists());
 }
 
 // ── positional package filters ──────────────────────────────────────────────
@@ -272,7 +311,10 @@ fn partial_run_never_prunes_out_of_scope_lock_entries() {
 #[test]
 fn conflict_between_trusted_donors_aborts_and_writes_nothing() {
     let project = fixture_project("sandbox");
-    set_manifest(project.path(), r#"{ "trusted": ["clash/*"] }"#);
+    set_manifest(
+        project.path(),
+        r#"{ "dependencies": { "composer": { "trusted": ["clash/*"] } } }"#,
+    );
     let assert = skills_cmd(project.path())
         .arg("update")
         .assert()
@@ -289,7 +331,10 @@ fn conflict_between_trusted_donors_aborts_and_writes_nothing() {
 #[test]
 fn dry_run_reports_conflicts_identically() {
     let project = fixture_project("sandbox");
-    set_manifest(project.path(), r#"{ "trusted": ["clash/*"] }"#);
+    set_manifest(
+        project.path(),
+        r#"{ "dependencies": { "composer": { "trusted": ["clash/*"] } } }"#,
+    );
     skills_cmd(project.path())
         .args(["update", "--dry-run"])
         .assert()
@@ -350,9 +395,12 @@ fn composer_sync_is_idempotent() {
 }
 
 #[test]
-fn local_composer_toggle_disables_the_provider() {
+fn composer_false_disables_the_vendor_walk() {
     let project = fixture_project("sandbox");
-    set_manifest(project.path(), r#"{ "local": { "composer": false } }"#);
+    set_manifest(
+        project.path(),
+        r#"{ "dependencies": { "composer": false } }"#,
+    );
     let out = stdout_of(skills_cmd(project.path()).arg("update").assert().success());
     assert!(out.contains("No skills found."), "{out}");
     assert!(!out.contains("acme/"), "{out}");
@@ -427,7 +475,7 @@ fn manifest_discovery_flag_enables_the_chain() {
     let project = fixture_project("sandbox");
     set_manifest(
         project.path(),
-        r#"{ "discovery": true, "trusted": ["acme/*", "nested/*", "oddball/*"] }"#,
+        r#"{ "discovery": true, "dependencies": { "composer": { "trusted": ["acme/*", "nested/*", "oddball/*"] } } }"#,
     );
     skills_cmd(project.path()).arg("update").assert().success();
     assert_eq!(
@@ -465,7 +513,10 @@ fn show_is_read_only_and_annotates_builtin_trust() {
 #[test]
 fn show_annotates_direct_dependency_trust() {
     let project = fixture_project("sandbox");
-    set_manifest(project.path(), r#"{ "trusted": [] }"#);
+    set_manifest(
+        project.path(),
+        r#"{ "dependencies": { "composer": { "trusted": [] } } }"#,
+    );
     let out = stdout_of(skills_cmd(project.path()).arg("show").assert().success());
     let basic = out
         .lines()
@@ -479,7 +530,7 @@ fn show_does_not_annotate_project_trusted_donors() {
     let project = fixture_project("sandbox");
     set_manifest(
         project.path(),
-        r#"{ "trusted": ["acme/skills-basic", "acme/skills-pro"] }"#,
+        r#"{ "dependencies": { "composer": { "trusted": ["acme/skills-basic", "acme/skills-pro"] } } }"#,
     );
     let out = stdout_of(skills_cmd(project.path()).arg("show").assert().success());
     for line in out.lines() {

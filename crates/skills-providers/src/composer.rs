@@ -531,7 +531,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_composer_false_disables_the_provider() {
+    async fn composer_disabled_disables_the_provider() {
         let tmp = tempfile::tempdir().unwrap();
         write(
             tmp.path(),
@@ -541,7 +541,7 @@ mod tests {
         write(tmp.path(), "vendor/acme/basic/skills/one/SKILL.md", "x");
         std::fs::write(
             tmp.path().join(MANIFEST_NAME),
-            r#"{ "local": { "composer": false } }"#,
+            r#"{ "dependencies": { "composer": false } }"#,
         )
         .unwrap();
         assert!(

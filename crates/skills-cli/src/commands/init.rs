@@ -11,6 +11,9 @@ use crate::CliError;
 const STUB: &str = r#"{
     "$schema": "__SCHEMA_URL__",
     "target": ".agents/skills",
+    "dependencies": {
+        "composer": true
+    },
     "sources": []
 }
 "#;

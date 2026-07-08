@@ -30,39 +30,36 @@
             "minLength": 1,
             "default": "skills.lock"
         },
-        "trusted": {
-            "description": "Trusted vendor patterns: 'vendor/package' or 'vendor/*'.",
-            "type": "array",
-            "items": {
-                "type": "string",
-                "pattern": "^[^/]+/[^/]+$"
-            }
-        },
-        "trusted-replace": {
-            "description": "When true, only the project 'trusted' list applies (builtin list and direct-dependency trust are disabled).",
-            "type": "boolean",
-            "default": false
-        },
         "discovery": {
             "description": "Gates the recursive-fallback skill locator.",
             "type": "boolean",
             "default": false
         },
-        "local": {
-            "description": "Local provider toggles.",
+        "dependencies": {
+            "description": "Per-package-manager configuration: how each manager's installed dependency tree becomes a skill donor, plus its per-manager trust list. composer is enabled by default; npm and go are reserved and disabled until their providers land. Each entry is a boolean toggle (true = { enabled: true }) or a configuration object.",
             "type": "object",
             "additionalProperties": false,
             "properties": {
                 "composer": {
-                    "type": "boolean"
+                    "description": "Composer dependencies (enabled by default). 'trusted' items use the 'vendor/package' or 'vendor/*' grammar.",
+                    "oneOf": [
+                        { "type": "boolean" },
+                        { "$ref": "#/$defs/composerDependencyConfig" }
+                    ]
                 },
                 "npm": {
-                    "description": "Reserved.",
-                    "type": "boolean"
+                    "description": "npm dependencies (reserved; disabled until the npm provider lands). Target 'trusted' grammar: bare package ('lodash'), scoped package ('@scope/pkg') or scope wildcard ('@scope/*').",
+                    "oneOf": [
+                        { "type": "boolean" },
+                        { "$ref": "#/$defs/dependencyManagerConfig" }
+                    ]
                 },
                 "go": {
-                    "description": "Reserved.",
-                    "type": "boolean"
+                    "description": "Go modules (reserved; disabled until the go provider lands). Target 'trusted' grammar: module path prefixes ('github.com/owner/mod', 'github.com/owner/*').",
+                    "oneOf": [
+                        { "type": "boolean" },
+                        { "$ref": "#/$defs/dependencyManagerConfig" }
+                    ]
                 }
             }
         },
@@ -183,6 +180,56 @@
         "required": ["sources", "remote"]
     },
     "$defs": {
+        "dependencyManagerConfig": {
+            "type": "object",
+            "description": "Per-manager configuration object (npm/go). 'trusted' items are validated structurally only (non-empty, unique) until the manager's provider lands.",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "description": "Walk this manager's installed tree for donors. Absent = the per-manager default (composer true; npm/go false). Configuring 'trusted' does not implicitly enable the manager.",
+                    "type": "boolean"
+                },
+                "trusted": {
+                    "description": "Per-manager trust patterns. Extends the built-in per-manager list and direct-dependency trust; 'trusted-replace' replaces both.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "uniqueItems": true
+                },
+                "trusted-replace": {
+                    "description": "When true, this manager's 'trusted' list fully replaces its built-in list AND its direct-dependency implicit trust.",
+                    "type": "boolean",
+                    "default": false
+                }
+            }
+        },
+        "composerDependencyConfig": {
+            "type": "object",
+            "description": "Composer per-manager configuration object. 'trusted' items use the 'vendor/package' or 'vendor/*' grammar.",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "description": "Walk the composer dependency tree for donors (default: true). Configuring 'trusted' does not implicitly enable the manager.",
+                    "type": "boolean"
+                },
+                "trusted": {
+                    "description": "Composer trust patterns: 'vendor/package' or 'vendor/*'. Extends the built-in list and direct-dependency trust; 'trusted-replace' replaces both.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[^/]+/[^/]+$"
+                    },
+                    "uniqueItems": true
+                },
+                "trusted-replace": {
+                    "description": "When true, the composer 'trusted' list fully replaces the built-in list AND direct-dependency implicit trust.",
+                    "type": "boolean",
+                    "default": false
+                }
+            }
+        },
         "sourceByPackage": {
             "type": "object",
             "description": "Donor source entry for name-based adapters (github, gitlab).",

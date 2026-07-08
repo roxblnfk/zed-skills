@@ -33,7 +33,7 @@ async fn semantic_errors_are_anchored_to_their_fields() {
     let tmp = tempfile::tempdir().unwrap();
     let manifest = concat!(
         "{\n",
-        "  \"trusted\": [\"acme/*\", \"bare\"],\n",
+        "  \"dependencies\": { \"composer\": { \"trusted\": [\"acme/*\", \"bare\"] } },\n",
         "  \"aliases\": [\".agents/skills\"]\n",
         "}",
     );
@@ -156,7 +156,7 @@ async fn missing_dir_source_error_is_anchored_at_its_path() {
 #[tokio::test(flavor = "multi_thread")]
 async fn did_change_fixing_the_error_clears_diagnostics() {
     let tmp = tempfile::tempdir().unwrap();
-    let broken = "{ \"trusted\": [\"bare\"] }";
+    let broken = "{ \"dependencies\": { \"composer\": { \"trusted\": [\"bare\"] } } }";
     let (mut client, uri) = open_manifest(tmp.path(), broken).await;
     let diags = client.wait_diagnostics(&uri).await;
     assert_eq!(diags.len(), 1);
@@ -179,7 +179,11 @@ async fn rapid_changes_publish_only_the_final_state() {
     // A burst of edits: intermediate states are broken, the last is clean.
     client.did_change_full(&uri, 2, "{ not json").await;
     client
-        .did_change_full(&uri, 3, "{ \"trusted\": [\"bare\"] }")
+        .did_change_full(
+            &uri,
+            3,
+            "{ \"dependencies\": { \"composer\": { \"trusted\": [\"bare\"] } } }",
+        )
         .await;
     client.did_change_full(&uri, 4, "{ }").await;
     let diags = client

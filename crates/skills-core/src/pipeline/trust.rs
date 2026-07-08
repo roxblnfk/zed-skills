@@ -12,8 +12,9 @@
 //! 3. Positional filters (`skills update acme/foo` / `acme/*`) restrict the
 //!    run to matching donors; naming a donor is an implicit trust grant.
 //! 4. Everything else must clear the effective trust list:
-//!    `trusted-replace: true` ? (project ∪ --trust) : (builtin ∪ project ∪
-//!    --trust). User-declared donors (`sources[]`, incl. `dir` entries) and direct
+//!    `dependencies.composer.trusted-replace: true` ? (project ∪ --trust) :
+//!    (builtin ∪ project ∪ --trust). User-declared donors (`sources[]`, incl.
+//!    `dir` entries) and direct
 //!    dependencies (unless `trusted-replace`) bypass the list. Untrusted
 //!    transitive donors are silently skipped and surfaced in the trailing
 //!    `[skip]` block.
@@ -106,7 +107,7 @@ pub fn trust_filter(ctx: &Ctx, vendors: Vec<VendorRef>) -> Result<TrustOutcome, 
     let filters = &ctx.run.packages;
     let cli = &ctx.run.trust;
     let discovery_on = ctx.discovery_enabled();
-    let replace = ctx.manifest.trusted_replace.unwrap_or(false);
+    let replace = ctx.manifest.trusted_replace();
     let project = ctx.manifest.trusted_patterns();
     let builtin = if replace {
         Vec::new()
@@ -195,8 +196,8 @@ pub fn trust_filter(ctx: &Ctx, vendors: Vec<VendorRef>) -> Result<TrustOutcome, 
 
     for name in untrusted {
         outcome.notes.push(Note::skip(format!(
-            "{name}: untrusted package not synced (add it to \"trusted\" in skills.json or rerun \
-             with --trust={name})"
+            "{name}: untrusted package not synced (add it to \
+             \"dependencies.composer.trusted\" in skills.json or rerun with --trust={name})"
         )));
     }
     if candidates > 0 && !discovery_on {
@@ -388,7 +389,10 @@ mod tests {
         assert_eq!(kept_names(&outcome), ["acme/direct"]);
         assert_eq!(outcome.kept[0].trust_source, Some(TrustSource::DirectDep));
 
-        let (_tmp, ctx) = ctx_with(r#"{ "trusted-replace": true }"#, RunOptions::default());
+        let (_tmp, ctx) = ctx_with(
+            r#"{ "dependencies": { "composer": { "trusted-replace": true } } }"#,
+            RunOptions::default(),
+        );
         let outcome = trust_filter(&ctx, refs).unwrap();
         assert!(outcome.kept.is_empty());
         assert_eq!(outcome.skipped[0].reason, SkipReason::Untrusted);
@@ -413,7 +417,7 @@ mod tests {
     #[test]
     fn trusted_replace_disables_builtin_and_limits_to_project_list() {
         let (_tmp, ctx) = ctx_with(
-            r#"{ "trusted": ["acme/pkg"], "trusted-replace": true }"#,
+            r#"{ "dependencies": { "composer": { "trusted": ["acme/pkg"], "trusted-replace": true } } }"#,
             RunOptions::default(),
         );
         let outcome = trust_filter(
@@ -431,7 +435,7 @@ mod tests {
     #[test]
     fn project_wildcard_and_cli_trust_apply() {
         let (_tmp, ctx) = ctx_with(
-            r#"{ "trusted": ["evil/*"] }"#,
+            r#"{ "dependencies": { "composer": { "trusted": ["evil/*"] } } }"#,
             RunOptions {
                 trust: patterns(&["clash/skills-conflict"]),
                 ..Default::default()

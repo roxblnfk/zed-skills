@@ -43,10 +43,10 @@ pub struct Manifest {
     /// Lockfile location, relative to the project root
     /// (default: `skills.lock`).
     pub lock_file: Option<String>,
-    pub trusted: Option<Vec<String>>,
-    pub trusted_replace: Option<bool>,
     pub discovery: Option<bool>,
-    pub local: Option<LocalConfig>,
+    /// Per-package-manager configuration: how each manager's installed
+    /// dependency tree becomes a skill donor, and its per-manager trust list.
+    pub dependencies: Option<DependenciesConfig>,
     /// Explicit donor sources. Each entry is one donor: a by-package
     /// (`github`/`gitlab`), by-url (`http`/`zip`), or path-based (`dir`)
     /// source.
@@ -59,14 +59,93 @@ pub struct Manifest {
     pub path_from_root: Option<String>,
 }
 
+/// Per-package-manager configuration block. The manager vocabulary is locked
+/// (`composer`/`npm`/`go`); unknown manager ids are fatal
+/// (`deny_unknown_fields`). Only `composer` has a live provider today; `npm`
+/// and `go` are reserved and disabled until their providers land.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct LocalConfig {
-    pub composer: Option<bool>,
-    /// Reserved for future providers.
-    pub npm: Option<bool>,
-    /// Reserved for future providers.
-    pub go: Option<bool>,
+pub struct DependenciesConfig {
+    pub composer: Option<DependencyEntry>,
+    /// Reserved for future providers (disabled by default).
+    pub npm: Option<DependencyEntry>,
+    /// Reserved for future providers (disabled by default).
+    pub go: Option<DependencyEntry>,
+}
+
+/// One manager entry: a bare on/off toggle or a full configuration object.
+/// `true` ≡ `{ "enabled": true }`, `false` ≡ `{ "enabled": false }`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DependencyEntry {
+    /// Short form: a plain enable/disable toggle.
+    Toggle(bool),
+    /// Object form: per-manager configuration.
+    Config(DependencyConfig),
+}
+
+/// Object form of a manager entry. Strict: unknown fields are fatal.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct DependencyConfig {
+    /// Walk this manager's installed tree for donors. Absent → the
+    /// per-manager default (composer `true`, npm/go `false`).
+    pub enabled: Option<bool>,
+    /// Per-manager trust patterns. Extends the built-in per-manager list and
+    /// direct-dependency trust; `trusted-replace` makes it replace both.
+    pub trusted: Option<Vec<String>>,
+    pub trusted_replace: Option<bool>,
+}
+
+impl DependencyEntry {
+    /// Resolved `enabled`, falling back to the per-manager default.
+    fn is_enabled(&self, default: bool) -> bool {
+        match self {
+            DependencyEntry::Toggle(b) => *b,
+            DependencyEntry::Config(c) => c.enabled.unwrap_or(default),
+        }
+    }
+
+    /// The object-form config, if this entry is not a bare toggle.
+    fn config(&self) -> Option<&DependencyConfig> {
+        match self {
+            DependencyEntry::Config(c) => Some(c),
+            DependencyEntry::Toggle(_) => None,
+        }
+    }
+}
+
+// Manual impl: an entry is either a boolean short form or an object; anything
+// else is a precise type error.
+impl<'de> Deserialize<'de> for DependencyEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Bool(b) => Ok(DependencyEntry::Toggle(b)),
+            serde_json::Value::Object(_) => serde_json::from_value(value)
+                .map(DependencyEntry::Config)
+                .map_err(D::Error::custom),
+            other => Err(D::Error::custom(format!(
+                "dependency entry must be a boolean or an object, got {}",
+                json_value_type(&other)
+            ))),
+        }
+    }
+}
+
+/// Human-readable JSON type name for error messages.
+fn json_value_type(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "a boolean",
+        serde_json::Value::Number(_) => "a number",
+        serde_json::Value::String(_) => "a string",
+        serde_json::Value::Array(_) => "an array",
+        serde_json::Value::Object(_) => "an object",
+    }
 }
 
 /// One `sources[]` entry. A tagged union over `from`:
@@ -343,19 +422,41 @@ impl Manifest {
         self.sources.is_none() && self.remote.is_some()
     }
 
-    /// `local.composer` toggle (default: enabled, SPEC §4).
-    pub fn composer_enabled(&self) -> bool {
-        self.local.as_ref().and_then(|l| l.composer).unwrap_or(true)
+    /// The `composer` manager entry, if configured.
+    fn composer_entry(&self) -> Option<&DependencyEntry> {
+        self.dependencies.as_ref().and_then(|d| d.composer.as_ref())
     }
 
-    /// Parsed project `trusted` patterns. Validation already rejected
-    /// malformed entries, so unparseable leftovers are ignored.
+    /// Whether the composer dependency tree is walked for donors. Resolved
+    /// from `dependencies.composer` (default: enabled).
+    pub fn composer_enabled(&self) -> bool {
+        self.composer_entry()
+            .map(|e| e.is_enabled(true))
+            .unwrap_or(true)
+    }
+
+    /// Parsed composer `trusted` patterns from `dependencies.composer`'s
+    /// object form. Validation already rejected malformed entries, so
+    /// unparseable leftovers are ignored. A bare toggle / absent entry has no
+    /// patterns.
     pub fn trusted_patterns(&self) -> Vec<crate::pattern::VendorPattern> {
-        self.trusted
-            .iter()
+        self.composer_entry()
+            .and_then(DependencyEntry::config)
+            .and_then(|c| c.trusted.as_ref())
+            .into_iter()
             .flatten()
             .filter_map(|p| crate::pattern::VendorPattern::parse(p).ok())
             .collect()
+    }
+
+    /// The composer entry's `trusted-replace` flag (default: false). When set,
+    /// the project `trusted` list replaces the built-in list and
+    /// direct-dependency trust.
+    pub fn trusted_replace(&self) -> bool {
+        self.composer_entry()
+            .and_then(DependencyEntry::config)
+            .and_then(|c| c.trusted_replace)
+            .unwrap_or(false)
     }
 
     fn validate(&self) -> Result<(), ManifestError> {
@@ -433,19 +534,13 @@ impl Manifest {
             }
         }
 
-        // trusted patterns: vendor/package or vendor/* (exactly one slash,
-        // both sides non-empty)
-        if let Some(trusted) = &self.trusted {
-            for (idx, pattern) in trusted.iter().enumerate() {
-                if crate::pattern::VendorPattern::parse(pattern).is_err() {
-                    issues.push(ManifestIssue::new(
-                        vec![PathSeg::key("trusted"), PathSeg::Index(idx)],
-                        format!(
-                            "invalid trusted pattern '{pattern}': expected 'vendor/package' or 'vendor/*'"
-                        ),
-                    ));
-                }
-            }
+        // dependencies: per-manager trust lists. composer uses the
+        // `VendorPattern` grammar; npm/go are structural-only for now (their
+        // grammars arrive with the providers).
+        if let Some(deps) = &self.dependencies {
+            validate_composer_trusted(deps.composer.as_ref(), &mut issues);
+            validate_structural_trusted(deps.npm.as_ref(), "npm", &mut issues);
+            validate_structural_trusted(deps.go.as_ref(), "go", &mut issues);
         }
 
         // sources / deprecated remote alias
@@ -543,6 +638,71 @@ fn paths_overlap(a: &str, b: &str) -> bool {
     let sb: Vec<&str> = b.split('/').collect();
     let n = sa.len().min(sb.len());
     sa[..n] == sb[..n]
+}
+
+/// Validate the composer manager's `trusted` list against the `VendorPattern`
+/// grammar (exact `vendor/pkg` or `vendor/*`). A bare toggle / absent entry
+/// has nothing to validate.
+fn validate_composer_trusted(entry: Option<&DependencyEntry>, issues: &mut Vec<ManifestIssue>) {
+    let Some(cfg) = entry.and_then(DependencyEntry::config) else {
+        return;
+    };
+    let Some(trusted) = &cfg.trusted else {
+        return;
+    };
+    for (idx, pattern) in trusted.iter().enumerate() {
+        if crate::pattern::VendorPattern::parse(pattern).is_err() {
+            issues.push(ManifestIssue::new(
+                vec![
+                    PathSeg::key("dependencies"),
+                    PathSeg::key("composer"),
+                    PathSeg::key("trusted"),
+                    PathSeg::Index(idx),
+                ],
+                format!(
+                    "invalid trusted pattern '{pattern}': expected 'vendor/package' or 'vendor/*'"
+                ),
+            ));
+        }
+    }
+}
+
+/// Validate an npm/go manager's `trusted` list structurally only: each entry
+/// must be non-empty after trimming, with no duplicates. Their pattern
+/// grammars are enforced when the corresponding provider lands.
+fn validate_structural_trusted(
+    entry: Option<&DependencyEntry>,
+    manager: &str,
+    issues: &mut Vec<ManifestIssue>,
+) {
+    let Some(cfg) = entry.and_then(DependencyEntry::config) else {
+        return;
+    };
+    let Some(trusted) = &cfg.trusted else {
+        return;
+    };
+    let mut seen = HashSet::new();
+    for (idx, pattern) in trusted.iter().enumerate() {
+        let at = || {
+            vec![
+                PathSeg::key("dependencies"),
+                PathSeg::key(manager),
+                PathSeg::key("trusted"),
+                PathSeg::Index(idx),
+            ]
+        };
+        if pattern.trim().is_empty() {
+            issues.push(ManifestIssue::new(
+                at(),
+                "invalid trusted pattern '': must not be empty",
+            ));
+        } else if !seen.insert(pattern.clone()) {
+            issues.push(ManifestIssue::new(
+                at(),
+                format!("duplicate trusted pattern '{pattern}'"),
+            ));
+        }
+    }
 }
 
 /// Validate one source entry; returns its uniqueness key
@@ -662,10 +822,12 @@ mod tests {
                 "target": ".agents/skills",
                 "aliases": [".claude/skills", ".cursor/skills"],
                 "lock-file": ".agents/skills.lock",
-                "trusted": ["acme/*", "acme/skills"],
-                "trusted-replace": false,
                 "discovery": false,
-                "local": { "composer": true, "npm": false, "go": false },
+                "dependencies": {
+                    "composer": { "enabled": true, "trusted": ["acme/*", "acme/skills"], "trusted-replace": false },
+                    "npm": false,
+                    "go": { "trusted": ["skill-pack-lodash"] }
+                },
                 "sources": [
                     { "from": "github", "package": "acme/skills", "ref": "v1.2.0", "skills": ["code-review"] },
                     { "from": "gitlab", "package": "org/group/sub/project", "ref": "main", "host": "gitlab.example.com" },
@@ -711,7 +873,10 @@ mod tests {
     #[test]
     fn non_bool_flags_rejected() {
         assert!(err(r#"{ "discovery": "yes" }"#).starts_with("skills.json:"));
-        assert!(err(r#"{ "trusted-replace": 1 }"#).starts_with("skills.json:"));
+        assert!(
+            err(r#"{ "dependencies": { "composer": { "trusted-replace": 1 } } }"#)
+                .starts_with("skills.json:")
+        );
     }
 
     #[test]
@@ -812,37 +977,190 @@ mod tests {
     }
 
     #[test]
-    fn bare_vendor_trusted_pattern_rejected() {
-        assert!(err(r#"{ "trusted": ["acme"] }"#).contains("invalid trusted pattern"));
+    fn composer_bare_vendor_trusted_pattern_rejected() {
+        assert!(
+            err(r#"{ "dependencies": { "composer": { "trusted": ["acme"] } } }"#)
+                .contains("invalid trusted pattern")
+        );
     }
 
     #[test]
-    fn multi_slash_trusted_pattern_rejected() {
-        assert!(err(r#"{ "trusted": ["a/b/c"] }"#).contains("invalid trusted pattern"));
+    fn composer_multi_slash_trusted_pattern_rejected() {
+        assert!(
+            err(r#"{ "dependencies": { "composer": { "trusted": ["a/b/c"] } } }"#)
+                .contains("invalid trusted pattern")
+        );
     }
 
     #[test]
-    fn star_only_trusted_pattern_rejected() {
-        assert!(err(r#"{ "trusted": ["*"] }"#).contains("invalid trusted pattern"));
+    fn composer_star_only_trusted_pattern_rejected() {
+        assert!(
+            err(r#"{ "dependencies": { "composer": { "trusted": ["*"] } } }"#)
+                .contains("invalid trusted pattern")
+        );
     }
 
     #[test]
-    fn valid_trusted_patterns_accepted() {
-        Manifest::parse(r#"{ "trusted": ["acme/skills", "acme/*"] }"#).unwrap();
+    fn composer_valid_trusted_patterns_accepted() {
+        Manifest::parse(
+            r#"{ "dependencies": { "composer": { "trusted": ["acme/skills", "acme/*"] } } }"#,
+        )
+        .unwrap();
+    }
+
+    // --- dependency entry forms & folding -----------------------------------
+
+    #[test]
+    fn dependency_bool_short_form_equals_object_enabled() {
+        // `true` ≡ `{ "enabled": true }`; `false` ≡ `{ "enabled": false }`.
+        let toggle = Manifest::parse(r#"{ "dependencies": { "composer": true } }"#).unwrap();
+        let object =
+            Manifest::parse(r#"{ "dependencies": { "composer": { "enabled": true } } }"#).unwrap();
+        assert!(toggle.composer_enabled());
+        assert!(object.composer_enabled());
+
+        let toggle = Manifest::parse(r#"{ "dependencies": { "composer": false } }"#).unwrap();
+        let object =
+            Manifest::parse(r#"{ "dependencies": { "composer": { "enabled": false } } }"#).unwrap();
+        assert!(!toggle.composer_enabled());
+        assert!(!object.composer_enabled());
     }
 
     #[test]
-    fn legacy_local_dir_key_rejected() {
-        // `local.dir` was replaced by `sources[]` dir entries; old manifests
-        // must fail parsing (deny_unknown_fields).
-        let e = err(r#"{ "local": { "dir": ["./a"] } }"#);
+    fn composer_enabled_defaults_true_when_absent() {
+        // Absent block, absent entry, and object without `enabled` all default
+        // composer to enabled.
+        assert!(Manifest::parse("{}").unwrap().composer_enabled());
+        assert!(
+            Manifest::parse(r#"{ "dependencies": { "npm": true } }"#)
+                .unwrap()
+                .composer_enabled()
+        );
+        assert!(
+            Manifest::parse(r#"{ "dependencies": { "composer": { "trusted": ["a/b"] } } }"#)
+                .unwrap()
+                .composer_enabled()
+        );
+    }
+
+    #[test]
+    fn npm_object_without_enabled_stays_disabled() {
+        // Per-manager default for npm/go is false; configuring `trusted` does
+        // not implicitly enable the manager.
+        let m =
+            Manifest::parse(r#"{ "dependencies": { "npm": { "trusted": ["lodash"] } } }"#).unwrap();
+        // No public npm accessor yet; the parsed model must carry the entry
+        // with `enabled` absent (folds to the per-manager default downstream).
+        let npm = m.dependencies.unwrap().npm.unwrap();
+        assert_eq!(npm.config().unwrap().enabled, None);
+    }
+
+    #[test]
+    fn trusted_patterns_and_replace_folding_matrix() {
+        // Toggle / absent entry → no patterns, no replace.
+        let m = Manifest::parse(r#"{ "dependencies": { "composer": true } }"#).unwrap();
+        assert!(m.trusted_patterns().is_empty());
+        assert!(!m.trusted_replace());
+        let m = Manifest::parse("{}").unwrap();
+        assert!(m.trusted_patterns().is_empty());
+        assert!(!m.trusted_replace());
+
+        // Object form carries patterns and the replace flag.
+        let m = Manifest::parse(
+            r#"{ "dependencies": { "composer": { "trusted": ["acme/*", "acme/skills"], "trusted-replace": true } } }"#,
+        )
+        .unwrap();
+        let parsed = m.trusted_patterns();
+        let pats: Vec<&str> = parsed.iter().map(|p| p.as_str()).collect();
+        assert_eq!(pats, ["acme/*", "acme/skills"]);
+        assert!(m.trusted_replace());
+
+        // trusted without trusted-replace → replace defaults to false.
+        let m = Manifest::parse(r#"{ "dependencies": { "composer": { "trusted": ["acme/*"] } } }"#)
+            .unwrap();
+        assert!(!m.trusted_replace());
+    }
+
+    // --- per-manager grammar enforcement ------------------------------------
+
+    #[test]
+    fn npm_go_trusted_are_structural_only() {
+        // A string rejected by the composer grammar is fine under npm/go
+        // (their grammars arrive with the providers).
+        assert!(
+            err(r#"{ "dependencies": { "composer": { "trusted": ["lodash"] } } }"#)
+                .contains("invalid trusted pattern")
+        );
+        Manifest::parse(r#"{ "dependencies": { "npm": { "trusted": ["lodash", "@scope/*"] } } }"#)
+            .unwrap();
+        Manifest::parse(r#"{ "dependencies": { "go": { "trusted": ["github.com/owner/*"] } } }"#)
+            .unwrap();
+    }
+
+    #[test]
+    fn npm_empty_trusted_entry_rejected() {
+        let e = err(r#"{ "dependencies": { "npm": { "trusted": ["  "] } } }"#);
+        assert!(e.contains("must not be empty"), "{e}");
+    }
+
+    #[test]
+    fn go_duplicate_trusted_entries_rejected() {
+        let e = err(
+            r#"{ "dependencies": { "go": { "trusted": ["github.com/a/b", "github.com/a/b"] } } }"#,
+        );
+        assert!(e.contains("duplicate trusted pattern"), "{e}");
+    }
+
+    // --- strictness ----------------------------------------------------------
+
+    #[test]
+    fn unknown_manager_id_rejected() {
+        let e = err(r#"{ "dependencies": { "cargo": true } }"#);
         assert!(e.starts_with("skills.json:"), "{e}");
         assert!(e.contains("unknown field"), "{e}");
     }
 
     #[test]
-    fn unknown_local_key_rejected() {
-        assert!(err(r#"{ "local": { "cargo": true } }"#).starts_with("skills.json:"));
+    fn unknown_dependency_object_field_rejected() {
+        let e = err(r#"{ "dependencies": { "composer": { "enable": true } } }"#);
+        assert!(e.starts_with("skills.json:"), "{e}");
+        assert!(e.contains("unknown field"), "{e}");
+    }
+
+    #[test]
+    fn non_bool_non_object_dependency_entry_rejected() {
+        let e = err(r#"{ "dependencies": { "composer": "yes" } }"#);
+        assert!(e.contains("must be a boolean or an object"), "{e}");
+        assert!(e.contains("a string"), "{e}");
+        let e = err(r#"{ "dependencies": { "composer": ["a/b"] } }"#);
+        assert!(e.contains("must be a boolean or an object"), "{e}");
+        assert!(e.contains("an array"), "{e}");
+        let e = err(r#"{ "dependencies": { "composer": 1 } }"#);
+        assert!(e.contains("must be a boolean or an object"), "{e}");
+        assert!(e.contains("a number"), "{e}");
+    }
+
+    // --- legacy keys are a hard break (no aliases, no migration) -------------
+
+    #[test]
+    fn legacy_trusted_key_rejected() {
+        let e = err(r#"{ "trusted": ["acme/*"] }"#);
+        assert!(e.starts_with("skills.json:"), "{e}");
+        assert!(e.contains("unknown field"), "{e}");
+    }
+
+    #[test]
+    fn legacy_trusted_replace_key_rejected() {
+        let e = err(r#"{ "trusted-replace": true }"#);
+        assert!(e.starts_with("skills.json:"), "{e}");
+        assert!(e.contains("unknown field"), "{e}");
+    }
+
+    #[test]
+    fn legacy_local_key_rejected() {
+        let e = err(r#"{ "local": { "composer": true } }"#);
+        assert!(e.starts_with("skills.json:"), "{e}");
+        assert!(e.contains("unknown field"), "{e}");
     }
 
     #[test]
@@ -1199,7 +1517,7 @@ mod tests {
             r#"{
                 "target": "../out",
                 "aliases": ["", ".claude/skills", "./.claude/skills"],
-                "trusted": ["acme/*", "bare"],
+                "dependencies": { "composer": { "trusted": ["acme/*", "bare"] } },
                 "sources": [
                     { "from": "github", "package": "a/b" },
                     { "from": "github", "package": "a/b" },
@@ -1235,7 +1553,7 @@ mod tests {
                 ("target", "invalid"),
                 ("aliases.0", "invalid"),
                 ("aliases.2", "duplicate"),
-                ("trusted.1", "invalid"),
+                ("dependencies.composer.trusted.1", "invalid"),
                 ("sources.1", "sources[1]"),
                 ("sources.2", "sources[2]"),
                 ("sources.4", "sources[4]"),
