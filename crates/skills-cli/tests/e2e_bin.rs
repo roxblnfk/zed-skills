@@ -30,7 +30,7 @@ fn init_works_in_empty_dir_without_composer_json() {
         Some(skills_core::manifest::SCHEMA_URL)
     );
     // The stub enables the composer dependency walk via the new
-    // `dependencies` block (spec §3.3), not the removed `local`/`trusted` keys.
+    // `dependencies` block, not the removed `local`/`trusted` keys.
     assert!(raw.contains("\"dependencies\""), "{raw}");
     assert!(manifest.composer_enabled());
     // The archive cache is gitignored from the start.

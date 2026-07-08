@@ -1,4 +1,4 @@
-//! Stage 3 — TrustFilter (SPEC §8): decide which discovered donors take part
+//! Stage 3 — TrustFilter: decide which discovered donors take part
 //! in the run, before anything is downloaded or scanned.
 //!
 //! Per donor, in order:
@@ -25,21 +25,21 @@ use crate::pattern::{VendorPattern, matches_any};
 use crate::pipeline::ctx::Ctx;
 
 /// Built-in trusted-vendors list for the composer provider, embedded from
-/// `resources/trusted-composer.txt` (SPEC §8).
+/// `resources/trusted-composer.txt`.
 const BUILTIN_COMPOSER_TRUST: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../resources/trusted-composer.txt"
 ));
 
 /// Built-in trusted-scopes list for the npm provider, embedded from
-/// `resources/trusted-npm.txt` (SPEC §8).
+/// `resources/trusted-npm.txt`.
 const BUILTIN_NPM_TRUST: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../resources/trusted-npm.txt"
 ));
 
 /// Built-in trusted-namespaces list for the go provider, embedded from
-/// `resources/trusted-go.txt` (SPEC §8).
+/// `resources/trusted-go.txt`.
 const BUILTIN_GO_TRUST: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../resources/trusted-go.txt"
@@ -57,8 +57,7 @@ fn trust_lines(raw: &'static str) -> impl Iterator<Item = &'static str> {
 ///
 /// This is the only built-in list the live pipeline consumes today: npm and go
 /// patterns are exposed raw via [`builtin_trusted_raw`] and their grammars are
-/// enforced only when those providers land (SPEC §8 / spec-dependencies.md
-/// §1.3).
+/// enforced only when those providers land.
 pub fn builtin_trusted() -> Vec<VendorPattern> {
     trust_lines(BUILTIN_COMPOSER_TRUST)
         .map(|line| {
@@ -81,8 +80,7 @@ pub fn builtin_trusted() -> Vec<VendorPattern> {
 /// (`dir`/`composer`/`github`/…) and has no npm/go variants.
 ///
 /// The npm and go grammars are only structural today; they are validated when
-/// their providers land. The live pipeline consumes only the composer list
-/// (SPEC §8 / spec-dependencies.md §1.3).
+/// their providers land. The live pipeline consumes only the composer list.
 pub fn builtin_trusted_raw(manager: &str) -> Vec<&'static str> {
     let raw = match manager {
         "composer" => BUILTIN_COMPOSER_TRUST,

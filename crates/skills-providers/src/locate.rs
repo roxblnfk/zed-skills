@@ -13,7 +13,7 @@
 //!   applies only when discovery is enabled.
 //! - `Discovery` (undeclared composer donors admitted via discovery) —
 //!   well-known containers first; the bounded recursive fallback only when
-//!   the containers yielded nothing (SPEC §6.3).
+//!   the containers yielded nothing.
 
 use std::path::Path;
 
@@ -117,11 +117,11 @@ fn declared_source(root: &Path) -> Option<std::path::PathBuf> {
 /// A recognized skill dir is never treated as a category (no nested
 /// skills). For discovery donors ([`SourceHint::Discovery`]) the locator is
 /// applicable only when the containers hold at least one actual skill —
-/// otherwise the chain proceeds to the recursive fallback (SPEC §6.3:
-/// "fallback only when no container yielded anything").
+/// otherwise the chain proceeds to the recursive fallback ("fallback only
+/// when no container yielded anything").
 pub struct WellKnownLocator;
 
-/// Conventional container roots, probed in order (SPEC §6.2).
+/// Conventional container roots, probed in order.
 pub const CONTAINER_ROOTS: [&str; 5] = [
     ".agents/skills",
     ".claude/skills",
@@ -197,7 +197,7 @@ impl SkillLocator for WellKnownLocator {
     }
 }
 
-/// Bounded recursive fallback (SPEC §6.3): max depth 5 below the package
+/// Bounded recursive fallback: max depth 5 below the package
 /// root, skipping `vendor/`, `node_modules/`, `.git/` and dot-prefixed
 /// dirs, never descending into a subdir carrying its own `composer.json`;
 /// the first `SKILL.md` on a branch stops descent.

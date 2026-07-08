@@ -86,7 +86,7 @@ pub fn render_update(report: &SyncReport) -> String {
         ));
     }
 
-    // Alias links, emitted after the copy report (SPEC §10).
+    // Alias links, emitted after the copy report.
     if !report.aliases.is_empty() {
         out.push_str("\nAliases:\n");
         for alias in &report.aliases {

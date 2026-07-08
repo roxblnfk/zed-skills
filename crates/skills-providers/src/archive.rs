@@ -1,4 +1,4 @@
-//! Zip archive extraction with zip-slip protection (SPEC §7 Cache).
+//! Zip archive extraction with zip-slip protection.
 //!
 //! Every entry name is validated *before* any byte hits disk: absolute
 //! paths, drive letters, `..` segments, NUL bytes and backslashes are all

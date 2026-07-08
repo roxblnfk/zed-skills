@@ -1,6 +1,6 @@
 //! End-to-end composer-provider scenarios (trust, filters, discovery,
 //! robustness, show annotations) against the sandbox fixture — ports of the
-//! PHP acceptance suite (SPEC §11).
+//! PHP acceptance suite.
 
 mod common;
 

@@ -1,4 +1,4 @@
-# Built-in trusted-vendors list for the go provider (SPEC §8).
+# Built-in trusted-vendors list for the go provider.
 #
 # Module-path prefix patterns; org-owned namespaces only. A module whose path
 # begins with any of these prefixes may ship AI skills into a consumer project

@@ -1,4 +1,4 @@
-//! `StaticAuditor` — deterministic local checks (SPEC §9), no network:
+//! `StaticAuditor` — deterministic local checks, no network:
 //!
 //! - frontmatter: missing frontmatter / missing required `name` / missing
 //!   `description` / `name` mismatching the directory name — all Warn;

@@ -1,4 +1,4 @@
-# Built-in trusted-vendors list for the composer provider (SPEC §8).
+# Built-in trusted-vendors list for the composer provider.
 #
 # A package whose Composer name matches any of these patterns may ship AI
 # skills into a consumer project without an explicit opt-in. Direct

@@ -27,7 +27,7 @@ pub(crate) trait HostApi: Send + Sync {
 }
 
 /// Resolve the manifest-declared ref (or its absence) to a concrete
-/// tag / branch / SHA (SPEC §7 Ref resolution).
+/// tag / branch / SHA.
 pub(crate) async fn resolve_ref(
     api: &dyn HostApi,
     package: &str,

@@ -1,6 +1,6 @@
 //! Best-effort SKILL.md frontmatter reader.
 //!
-//! Rules (spec §1): read the first 4096 bytes, strip a UTF-8 BOM, the
+//! Rules: read the first 4096 bytes, strip a UTF-8 BOM, the
 //! frontmatter must start at byte 0 (`---` line), only flat `key: value`
 //! lines are consumed, one layer of surrounding quotes is stripped.
 //! Anything unparseable yields an empty result — a skill is never rejected

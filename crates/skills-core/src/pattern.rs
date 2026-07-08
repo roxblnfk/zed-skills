@@ -1,6 +1,6 @@
 //! `VendorPattern` — trust / filter patterns matching package names.
 //!
-//! Two shapes (SPEC §8):
+//! Two shapes:
 //! - `vendor/package` — exact name match
 //! - `vendor/*`       — any package in the vendor namespace
 //!

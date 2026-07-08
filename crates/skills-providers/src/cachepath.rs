@@ -1,4 +1,4 @@
-//! Deterministic cache paths for fetched remote archives (SPEC §7 Cache).
+//! Deterministic cache paths for fetched remote archives.
 //!
 //! Layout under the project-local cache root (`<project>/.skills-cache/`):
 //!

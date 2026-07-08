@@ -1,4 +1,4 @@
-# Built-in trusted-vendors list for the npm provider (SPEC §8).
+# Built-in trusted-vendors list for the npm provider.
 #
 # Only ownership-verified npm scopes are built in. A package whose npm name
 # matches any of these scope patterns may ship AI skills into a consumer

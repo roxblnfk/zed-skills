@@ -1,5 +1,5 @@
 //! `ComposerProvider` — donors discovered from an installed composer
-//! project (SPEC §6.1, §8).
+//! project.
 //!
 //! Enumeration reads `vendor/composer/installed.json` (both the wrapped
 //! `{"packages": [...]}` and the legacy bare-array forms); when that file is
@@ -301,7 +301,7 @@ fn declared_skills_source(extra: Option<&serde_json::Value>) -> Option<&serde_js
     extra?.get("skills")?.as_object()?.get("source")
 }
 
-/// Validate `extra.skills.source` (SPEC §6.1); returns the normalized
+/// Validate `extra.skills.source`; returns the normalized
 /// `/`-separated relative path or the malformed-donor reason.
 fn validate_source(source: &serde_json::Value) -> Result<String, String> {
     let value = source

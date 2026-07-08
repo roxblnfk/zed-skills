@@ -136,8 +136,7 @@ impl SkillsFilter {
     }
 }
 
-/// How a donor entered the run — determines which trust rules apply to it
-/// (SPEC §8).
+/// How a donor entered the run — determines which trust rules apply to it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrustBasis {
     /// Declared by the user in `skills.json` (`sources[]`, incl. `dir`
@@ -166,7 +165,7 @@ pub enum DonorStatus {
 }
 
 /// Locate-stage routing hint carried by a materialized vendor: tells the
-/// locator chain which strategies apply (SPEC §6).
+/// locator chain which strategies apply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceHint {
     /// `dir` source donors: the vendor root itself is the skills root.

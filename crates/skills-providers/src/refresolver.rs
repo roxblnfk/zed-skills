@@ -1,5 +1,5 @@
-//! Pure ref-resolution rules for remote providers (SPEC §7, ported from the
-//! PHP `RefResolver` — a deliberately narrow semver subset).
+//! Pure ref-resolution rules for remote providers, ported from the PHP
+//! `RefResolver` — a deliberately narrow semver subset.
 //!
 //! - **Stable tag**: `v?X.Y.Z`, exactly three numeric components, no suffix.
 //! - **Any-semver**: stable plus an optional `-<prerelease>` suffix

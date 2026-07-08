@@ -1,5 +1,5 @@
-//! Bounded skill-tree scanning (SPEC §6.2–§6.3), shared by the discovery
-//! locators and the composer provider's candidate detection.
+//! Bounded skill-tree scanning, shared by the discovery locators and the
+//! composer provider's candidate detection.
 //!
 //! Mirrors the PHP `SkillTreeScanner`:
 //!

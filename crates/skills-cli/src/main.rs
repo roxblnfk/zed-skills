@@ -118,7 +118,7 @@ enum Command {
     },
 }
 
-/// A command failure carrying its exit code (spec §10: 0 ok, 1 usage/config,
+/// A command failure carrying its exit code (0 ok, 1 usage/config,
 /// 2 conflict, 3 audit block, 4 provider error, 5 changes pending — the
 /// `update --check` "out of sync" status, not a failure).
 pub(crate) struct CliError {
