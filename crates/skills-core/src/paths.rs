@@ -36,6 +36,74 @@ pub fn normalize_rel(input: &str) -> Result<String, String> {
     Ok(segments.join("/"))
 }
 
+/// Lexically normalize a *declared donor path* without touching the
+/// filesystem. Unlike [`normalize_rel`] (used for `target`/`aliases`/
+/// `lock-file`, which must stay inside the project root), a `dir` source is
+/// read-only, so this normalizer never fails and deliberately preserves
+/// paths that leave the project: absolute prefixes and leading `..` are
+/// kept. The result is a stable display / dedup / matching key.
+///
+/// Rules: trim; unify separators to `/`; drop empty and `.` segments;
+/// resolve `..` against a preceding real segment while KEEPING unmatched
+/// leading `..` segments (`../../x` stays `../../x`); preserve the absolute
+/// prefix — a leading `/` stays (`/a/../b` → `/b`), a Windows drive prefix
+/// is kept with the drive letter uppercased (`c:\x\..\y` → `C:/y`), a UNC
+/// `//server/share/...` keeps its leading `//`; `..` never pops the absolute
+/// prefix itself. Empty or `.`-only input yields `""` (callers treat that as
+/// the project root).
+pub fn normalize_declared(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let bytes = trimmed.as_bytes();
+
+    // Detect and strip an absolute prefix (checked on both separators).
+    let (abs_prefix, rest): (Option<String>, &str) =
+        if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            let drive = (bytes[0] as char).to_ascii_uppercase();
+            (Some(format!("{drive}:/")), &trimmed[2..])
+        } else if bytes.len() >= 2
+            && (bytes[0] == b'/' || bytes[0] == b'\\')
+            && (bytes[1] == b'/' || bytes[1] == b'\\')
+        {
+            (Some("//".to_string()), &trimmed[2..])
+        } else if bytes[0] == b'/' || bytes[0] == b'\\' {
+            (Some("/".to_string()), &trimmed[1..])
+        } else {
+            (None, trimmed)
+        };
+    let is_absolute = abs_prefix.is_some();
+
+    // `segments` never contains `..`; unmatched leading `..` are counted
+    // separately (only meaningful for relative paths).
+    let mut segments: Vec<&str> = Vec::new();
+    let mut leading_dotdot: usize = 0;
+    for seg in rest.split(['/', '\\']) {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                if segments.pop().is_none() && !is_absolute {
+                    // Nothing to pop and not confined by a prefix: keep it.
+                    leading_dotdot += 1;
+                }
+                // Absolute with nothing to pop: drop (can't escape the root).
+            }
+            s => segments.push(s),
+        }
+    }
+
+    let mut all: Vec<&str> = Vec::with_capacity(leading_dotdot + segments.len());
+    all.extend(std::iter::repeat_n("..", leading_dotdot));
+    all.extend(segments);
+    let body = all.join("/");
+
+    match abs_prefix {
+        Some(prefix) => format!("{prefix}{body}"),
+        None => body,
+    }
+}
+
 /// Whether the string looks like an absolute path on any platform
 /// (`/x`, `\x`, `C:\x`, `C:/x`, `//server/share`).
 pub fn is_absolute_like(p: &str) -> bool {
@@ -103,6 +171,69 @@ mod tests {
         assert!(normalize_rel("..").is_err());
         assert!(normalize_rel("../x").is_err());
         assert!(normalize_rel("a/../../x").is_err());
+    }
+
+    #[test]
+    fn normalize_declared_relative_inside_root() {
+        assert_eq!(normalize_declared("./a/b"), "a/b");
+        assert_eq!(normalize_declared("a\\b\\c"), "a/b/c");
+        assert_eq!(normalize_declared("a//b/./c"), "a/b/c");
+        assert_eq!(normalize_declared("a/b/../c"), "a/c");
+        assert_eq!(normalize_declared("a/../../x"), "../x");
+    }
+
+    #[test]
+    fn normalize_declared_empty_and_root() {
+        assert_eq!(normalize_declared(""), "");
+        assert_eq!(normalize_declared("   "), "");
+        assert_eq!(normalize_declared("."), "");
+        assert_eq!(normalize_declared("./"), "");
+        assert_eq!(normalize_declared("a/.."), "");
+    }
+
+    #[test]
+    fn normalize_declared_keeps_leading_dotdot() {
+        assert_eq!(normalize_declared(".."), "..");
+        assert_eq!(normalize_declared("../x"), "../x");
+        assert_eq!(normalize_declared("..\\x"), "../x");
+        assert_eq!(normalize_declared("../../x"), "../../x");
+        assert_eq!(normalize_declared("../sibling/skills"), "../sibling/skills");
+    }
+
+    #[test]
+    fn normalize_declared_preserves_absolute_prefix() {
+        assert_eq!(normalize_declared("/a/../b"), "/b");
+        assert_eq!(normalize_declared("\\a\\b"), "/a/b");
+        // `..` never pops the root prefix.
+        assert_eq!(normalize_declared("/.."), "/");
+        assert_eq!(normalize_declared("/../a"), "/a");
+        assert_eq!(normalize_declared("/opt/skills"), "/opt/skills");
+    }
+
+    #[test]
+    fn normalize_declared_windows_drive_uppercased() {
+        assert_eq!(normalize_declared("c:\\x\\..\\y"), "C:/y");
+        assert_eq!(normalize_declared("C:/shared/skills"), "C:/shared/skills");
+        assert_eq!(normalize_declared("c:/a/../..\\b"), "C:/b");
+    }
+
+    #[test]
+    fn normalize_declared_unc_keeps_double_slash() {
+        assert_eq!(
+            normalize_declared("//server/share/x/../y"),
+            "//server/share/y"
+        );
+        assert_eq!(
+            normalize_declared("\\\\server\\share\\a"),
+            "//server/share/a"
+        );
+    }
+
+    #[test]
+    fn normalize_declared_dedup_keys_match() {
+        assert_eq!(normalize_declared("./a"), normalize_declared("a\\"));
+        assert_eq!(normalize_declared("a"), normalize_declared("./a"));
+        assert_eq!(normalize_declared("../x"), normalize_declared("..\\x"));
     }
 
     #[test]

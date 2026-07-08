@@ -14,17 +14,24 @@
 //! `gitlab.com`); anything else needs the `from:` shorthand plus `--host`.
 
 use skills_core::domain::ProviderId;
+use skills_core::paths::{is_absolute_like, normalize_declared};
 
 use crate::remote::normalize_host;
 use crate::{github, gitlab};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedAdd {
-    /// `ProviderId::Github` or `ProviderId::Gitlab`.
+    /// `ProviderId::Github` / `ProviderId::Gitlab` for repo inputs;
+    /// `ProviderId::Dir` for a path-shaped input.
     pub from: ProviderId,
+    /// The repo `owner/repo[/...]` identifier. Empty for a dir input.
     pub package: String,
-    /// `None` = the provider's public default host.
+    /// `None` = the provider's public default host. Always `None` for dir.
     pub host: Option<String>,
+    /// The declared donor path for a dir input (`normalize_declared`d,
+    /// `/`-separated, kept as typed — relative stays relative, absolute stays
+    /// absolute). `None` for repo inputs.
+    pub path: Option<String>,
 }
 
 /// Parse the `skills add` positional input, reconciling a `--host`
@@ -33,6 +40,25 @@ pub fn parse_add_input(input: &str, host_override: Option<&str>) -> Result<Parse
     let input = input.trim();
     if input.is_empty() {
         return Err("input must not be empty".to_string());
+    }
+
+    // Path-shaped input selects the dir adapter — checked BEFORE the
+    // URL/shorthand rules so `./x`, `../x`, `/abs`, `\abs`, `X:\...` never
+    // fall through to repo parsing. `owner/repo` and URLs carry none of these
+    // prefixes and route unchanged.
+    if looks_like_path(input) {
+        // A host is meaningless for a local directory. (`--ref` never reaches
+        // this parser — the CLI passes it separately — so the CLI rejects a
+        // ref on a dir input.)
+        if host_override.is_some() {
+            return Err("'--host' is not applicable to a dir source".to_string());
+        }
+        return Ok(ParsedAdd {
+            from: ProviderId::Dir,
+            package: String::new(),
+            host: None,
+            path: Some(normalize_declared(input)),
+        });
     }
 
     // Shorthand: from:package.
@@ -89,7 +115,19 @@ fn finish(from: ProviderId, package: &str, host: Option<String>) -> Result<Parse
         from,
         package,
         host,
+        path: None,
     })
+}
+
+/// Whether an input is path-shaped: an explicit `./` / `../` prefix (either
+/// separator) or an absolute path (`/x`, `\x`, `C:\x`, `C:/x`). `owner/repo`
+/// and `host:port`-style clone URLs carry none of these prefixes.
+fn looks_like_path(input: &str) -> bool {
+    input.starts_with("./")
+        || input.starts_with("../")
+        || input.starts_with(".\\")
+        || input.starts_with("..\\")
+        || is_absolute_like(input)
 }
 
 /// `https?://host/path[.git][?...][#...]` → `(scheme://host, path)`.
@@ -197,7 +235,59 @@ mod tests {
             from,
             package: package.to_string(),
             host: host.map(str::to_string),
+            path: None,
         }
+    }
+
+    fn dir(path: &str) -> ParsedAdd {
+        ParsedAdd {
+            from: ProviderId::Dir,
+            package: String::new(),
+            host: None,
+            path: Some(path.to_string()),
+        }
+    }
+
+    #[test]
+    fn path_shaped_inputs_select_dir() {
+        assert_eq!(parse_add_input("./skills", None).unwrap(), dir("skills"));
+        assert_eq!(
+            parse_add_input("../shared", None).unwrap(),
+            dir("../shared")
+        );
+        assert_eq!(
+            parse_add_input("/abs/skills", None).unwrap(),
+            dir("/abs/skills")
+        );
+        assert_eq!(
+            parse_add_input(r"C:\shared\skills", None).unwrap(),
+            dir("C:/shared/skills")
+        );
+        assert_eq!(
+            parse_add_input(r".\win\style", None).unwrap(),
+            dir("win/style")
+        );
+    }
+
+    #[test]
+    fn repo_inputs_never_route_to_dir() {
+        // Shorthand and URLs must be unaffected by the path branch. A plain
+        // `owner/repo` (no path prefix) still needs the `from:` shorthand.
+        assert!(parse_add_input("owner/repo", None).is_err());
+        assert_eq!(
+            parse_add_input("github:owner/repo", None).unwrap(),
+            parsed(ProviderId::Github, "owner/repo", None)
+        );
+        assert_eq!(
+            parse_add_input("https://github.com/acme/skills", None).unwrap(),
+            parsed(ProviderId::Github, "acme/skills", None)
+        );
+    }
+
+    #[test]
+    fn host_with_path_is_rejected() {
+        let err = parse_add_input("./skills", Some("github.com")).unwrap_err();
+        assert!(err.contains("not applicable to a dir source"), "{err}");
     }
 
     #[test]

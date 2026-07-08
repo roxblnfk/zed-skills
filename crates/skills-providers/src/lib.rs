@@ -24,7 +24,7 @@ pub mod url;
 
 pub use addparse::{ParsedAdd, parse_add_input};
 pub use composer::{ComposerProvider, ComposerVendor};
-pub use dir::{DirProvider, DirVendor};
+pub use dir::{DirProvider, DirVendor, vendor_name_from_dir};
 pub use github::{GithubProvider, GithubVendor};
 pub use gitlab::{GitlabProvider, GitlabVendor};
 pub use http::{HttpClient, HttpError, HttpResponse, MockHttp, ReqwestClient};

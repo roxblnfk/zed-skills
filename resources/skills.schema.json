@@ -257,7 +257,7 @@
                 "path": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Directory path, relative to the project root and confined to it: absolute paths (including Windows drive letters) and escaping '..' segments are rejected."
+                    "description": "Directory path. Relative paths resolve from the project root; absolute paths (including Windows drive letters) are honoured, and locations outside the project are allowed — a sources entry is an explicit act of trust and syncing only reads from it. The path must not be the project root and must not overlap the sync target or an alias."
                 },
                 "package": {
                     "type": "string",

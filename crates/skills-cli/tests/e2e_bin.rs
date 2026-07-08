@@ -350,6 +350,8 @@ fn show_before_update_is_read_only_and_reports_not_synced() {
     let out = stdout_of(skills_cmd(project.path()).arg("show").assert().success());
     assert!(out.starts_with("Target: .agents/skills"), "{out}");
     assert!(out.contains("not-synced"), "{out}");
+    // A `sources[]` donor is labeled as declared, not silently trusted.
+    assert!(out.contains("[declared in skills.json]"), "{out}");
     // Read-only: no target dir, no lockfile.
     assert!(!project.path().join(".agents").exists());
     assert!(!project.path().join("skills.lock").exists());

@@ -110,6 +110,38 @@ mod tests {
     }
 
     #[test]
+    fn watch_set_includes_outward_and_absolute_dir_paths() {
+        // A dir source may be outward (`../x`) or absolute — both legal reads.
+        // They register in the watch set when they exist on disk (no in-root
+        // filtering).
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = tmp.path().join("project");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(tmp.path().join("sibling")).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let abs = outside.path().join("shared");
+        std::fs::create_dir_all(&abs).unwrap();
+
+        let manifest = Manifest::parse(
+            &serde_json::json!({
+                "sources": [
+                    { "from": "dir", "path": "../sibling" },
+                    { "from": "dir", "path": abs.to_string_lossy() }
+                ],
+                "target": "t"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let set = watch_set(&proj, Some(&manifest));
+        assert!(
+            set.contains(&join_declared(&proj, "../sibling")),
+            "outward path missing: {set:?}"
+        );
+        assert!(set.contains(&abs), "absolute path missing: {set:?}");
+    }
+
+    #[test]
     fn watch_set_includes_non_root_lock_file_parent() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join(".meta")).unwrap();

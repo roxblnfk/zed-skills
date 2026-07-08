@@ -24,10 +24,12 @@ async fn dir_provider_satisfies_vendor_contract() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join(MANIFEST_NAME),
-        r#"{ "sources": [ { "from": "dir", "path": "./skills-src" } ] }"#,
+        r#"{ "sources": [ { "from": "dir", "path": "./acme/skills-src" } ] }"#,
     )
     .unwrap();
-    let donor = tmp.path().join("skills-src");
+    // The vendor name derives from the declared path's last two segments
+    // (`acme/skills-src`) — machine-independent, no tempdir name involved.
+    let donor = tmp.path().join("acme").join("skills-src");
     make_skill(&donor, "alpha");
     make_skill(&donor, "beta");
     // Distractors: loose file + dir without SKILL.md.
@@ -37,7 +39,7 @@ async fn dir_provider_satisfies_vendor_contract() {
     let ctx = prepare(tmp.path(), PrepareOptions::default()).unwrap();
     let refs = DirProvider.discover(&ctx).await.unwrap();
     assert_eq!(refs.len(), 1);
-    assert_eq!(refs[0].name.as_str(), "dir/skills-src");
+    assert_eq!(refs[0].name.as_str(), "acme/skills-src");
 
     let cache = Cache::new(tmp.path().join(".skills-cache"));
     let locators: Vec<Arc<dyn SkillLocator>> = vec![Arc::new(DeclaredLocator)];

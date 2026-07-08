@@ -4,7 +4,7 @@ expression: out
 ---
 Target: .agents/skills
 
-dir/skills-src:
+dir/skills-src [declared in skills.json]:
   code-review  Reviews code changes before commit  not-synced
   docs-helper  Writes documentation                not-synced
   plain        -                                   not-synced

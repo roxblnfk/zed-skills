@@ -79,10 +79,10 @@ pub fn document_links(project_root: &Path, text: &str) -> Vec<DocumentLink> {
                 let Some(dir) = entry.path.as_deref() else {
                     continue;
                 };
-                let Ok(norm) = skills_core::paths::normalize_rel(dir) else {
-                    continue; // empty/absolute/escaping — validation flags it
-                };
-                let abs = project_root.join(skills_core::paths::rel_to_path(&norm));
+                // A dir source may be relative, absolute, or point outside the
+                // project root (`../x`) — all legal (read-only). `join_declared`
+                // handles every shape; only an on-disk directory gets a link.
+                let abs = skills_core::paths::join_declared(project_root, dir);
                 if !abs.is_dir() {
                     continue; // missing on disk — no link
                 }
@@ -290,9 +290,9 @@ mod tests {
     #[test]
     fn unknown_from_and_missing_fields_are_skipped() {
         let tmp = tempfile::tempdir().unwrap();
-        // Semantically invalid entries (validation flags them) still must
-        // not produce bogus links: unknown source, package-less github,
-        // path-less or root-escaping dir.
+        // No bogus links: unknown source, package-less github, path-less dir,
+        // and an outward dir that does not exist on disk (outward paths are
+        // legal now — this one is skipped only because it's missing).
         let text = r#"{
   "sources": [
     { "from": "svn", "url": "https://svn.example.com/repo" },
@@ -302,6 +302,43 @@ mod tests {
   ]
 }"#;
         assert!(document_links(tmp.path(), text).is_empty());
+    }
+
+    #[test]
+    fn absolute_dir_path_links_when_it_exists() {
+        // A dir source may point at an absolute path entirely outside the
+        // project (a legal read) — it still gets a file:// link.
+        let outside = tempfile::tempdir().unwrap();
+        let donor = outside.path().join("shared").join("skills");
+        std::fs::create_dir_all(&donor).unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        let manifest = serde_json::json!({
+            "sources": [ { "from": "dir", "path": donor.to_string_lossy() } ]
+        })
+        .to_string();
+        let links = document_links(proj.path(), &manifest);
+        assert_eq!(links.len(), 1, "{links:?}");
+        let target = links[0].target.as_ref().unwrap().as_str();
+        assert!(target.starts_with("file://"), "{target}");
+        assert!(target.ends_with("/skills"), "{target}");
+        assert_eq!(links[0].tooltip.as_deref(), Some(TOOLTIP_DIR));
+    }
+
+    #[test]
+    fn outward_relative_dir_path_links_when_it_exists() {
+        // Nest the project inside a tempdir so `../sibling` resolves to a real
+        // directory outside the project root.
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = tmp.path().join("project");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(tmp.path().join("sibling")).unwrap();
+        let text = r#"{ "sources": [ { "from": "dir", "path": "../sibling" } ] }"#;
+        let links = document_links(&proj, text);
+        assert_eq!(links.len(), 1, "{links:?}");
+        let target = links[0].target.as_ref().unwrap().as_str();
+        assert!(target.starts_with("file://"), "{target}");
+        assert!(target.ends_with("/sibling"), "{target}");
+        assert_eq!(links[0].tooltip.as_deref(), Some(TOOLTIP_DIR));
     }
 
     #[test]

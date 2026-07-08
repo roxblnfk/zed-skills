@@ -1,28 +1,37 @@
-//! `skills add <url|from:package>` — register a donor in `skills.json`'s
-//! `sources[]`, validate it actually ships skills, then sync.
+//! `skills add <url|from:package|./path>` — register a donor in
+//! `skills.json`'s `sources[]`, validate it actually ships skills, then sync.
 //!
-//! Flow (PHP `skills:add` parity):
-//! 1. parse the input (shorthand / web / ssh / scp);
-//! 2. resolve the concrete ref (explicit ref verbatim, caret via tag
-//!    listing, absent ref via the cascade);
-//! 3. decide the stored ref: user-typed wins verbatim; an auto-resolved
-//!    stable tag is stored as `^X.Y.Z`; anything else stores no ref;
-//! 4. materialize + scan the donor — refuse to register one that yields
-//!    no skills;
-//! 5. upsert the entry into `skills.json` (dedupe by `from|host|id`);
-//! 6. run a full `update`.
+//! Two input shapes are accepted:
+//!
+//! - a **repo** (shorthand / web / ssh / scp URL) → a `github`/`gitlab`
+//!   source. Flow (PHP `skills:add` parity): parse the input; resolve the
+//!   concrete ref (explicit ref verbatim, caret via tag listing, absent ref
+//!   via the cascade); decide the stored ref (user-typed wins verbatim, an
+//!   auto-resolved stable tag is stored as `^X.Y.Z`, anything else stores no
+//!   ref); materialize + scan the donor — refuse to register one that yields
+//!   no skills; upsert into `skills.json` (dedupe by `from|host|package`);
+//!   run a full `update`.
+//!
+//! - a **path** (`./x`, `../x`, `/abs`, `X:\...`) → a `dir` source (PHP
+//!   `skills:add ./skills` parity). `--ref` is rejected (a local directory
+//!   has no ref); the declared path is resolved against the cwd and must
+//!   exist and ship at least one skill. The entry is `{ "from": "dir",
+//!   "path": "<declared>" }` (deduped by `dir|default|<path>`).
 
 use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use skills_core::domain::ProviderId;
+use skills_core::domain::{ProviderId, SkillsFilter, VendorName};
 use skills_core::manifest::{MANIFEST_NAME, Manifest, SCHEMA_URL};
+use skills_core::paths::{join_declared, normalize_declared};
 use skills_core::pipeline::ctx::CACHE_DIR;
 use skills_core::pipeline::scan::scan_vendor;
 use skills_core::traits::{Cache, Vendor};
-use skills_providers::{GithubVendor, GitlabVendor, parse_add_input, refresolver};
+use skills_providers::{
+    DirVendor, GithubVendor, GitlabVendor, parse_add_input, refresolver, vendor_name_from_dir,
+};
 
 use crate::CliError;
 
@@ -33,20 +42,93 @@ pub async fn run(
     skills: Vec<String>,
     host: Option<String>,
 ) -> Result<(), CliError> {
-    // 1. Parse.
+    // 1. Parse. A path-shaped input selects the dir adapter.
     let parsed = parse_add_input(input, host.as_deref())
         .map_err(|e| CliError::config(format!("add: {e}")))?;
 
+    if parsed.from == ProviderId::Dir {
+        return add_dir(cwd, parsed.path.unwrap_or_default(), r#ref, skills).await;
+    }
+    add_repo(cwd, parsed.from, parsed.package, parsed.host, r#ref, skills).await
+}
+
+/// Register a local `dir` donor. The declared path (already
+/// `normalize_declared`d by the parser) is resolved against the cwd, must
+/// exist, and must ship at least one skill.
+async fn add_dir(
+    cwd: &Path,
+    declared: String,
+    r#ref: Option<String>,
+    skills: Vec<String>,
+) -> Result<(), CliError> {
+    // A local directory has no ref — `--ref` never reaches the parser, so the
+    // rejection lives here.
+    if r#ref.is_some() {
+        return Err(CliError::config(
+            "add: '--ref' is not applicable to a dir source",
+        ));
+    }
+
+    let root = join_declared(cwd, &declared);
+    if !root.is_dir() {
+        return Err(CliError::config(format!(
+            "add: directory does not exist: '{declared}'"
+        )));
+    }
+    // The vendor name derives from the DECLARED path; only machine-specific
+    // outward shapes fall back to the canonical dir, so canonicalize for that
+    // argument (a failure on an existing dir is a config error).
+    let canonical = std::fs::canonicalize(&root).map_err(|e| {
+        CliError::config(format!("add: cannot resolve directory '{declared}': {e}"))
+    })?;
+    let name = vendor_name_from_dir(&declared, &canonical).ok_or_else(|| {
+        CliError::config(format!("add: dir path has no directory name: '{declared}'"))
+    })?;
+
+    // Validate: the directory must actually ship skills.
+    let vendor: Arc<dyn Vendor> = Arc::new(DirVendor::new(
+        VendorName::new(name),
+        declared.clone(),
+        root,
+        SkillsFilter::All,
+    ));
+    let scanned = materialize_and_scan(cwd, &vendor).await.map_err(|e| {
+        CliError::provider(format!(
+            "add: dir:{declared} ships no recognizable skills root: {e}"
+        ))
+    })?;
+    if scanned == 0 {
+        return Err(CliError::provider(format!(
+            "add: dir:{declared} ships no skills - refusing to register it as a donor"
+        )));
+    }
+
+    // Upsert into skills.json (dedupe by dir|default|<path>).
+    upsert_manifest_entry(cwd, "dir", "", None, None, Some(&declared), &skills)?;
+    println!("Registered dir:{declared}");
+
+    sync_after_add(cwd).await
+}
+
+/// Register a remote `github`/`gitlab` donor.
+async fn add_repo(
+    cwd: &Path,
+    from: ProviderId,
+    package: String,
+    host: Option<String>,
+    r#ref: Option<String>,
+    skills: Vec<String>,
+) -> Result<(), CliError> {
     // 2 + 3. Resolve the concrete ref and decide what to store.
     let http = super::http_client()?;
     let vendor: Arc<dyn Vendor>;
     let resolved: String;
-    match parsed.from {
+    match from {
         ProviderId::Github => {
             let v = GithubVendor::new(
                 Arc::clone(&http),
-                parsed.package.clone(),
-                parsed.host.clone(),
+                package.clone(),
+                host.clone(),
                 r#ref.clone(),
                 std::env::var("GITHUB_TOKEN").ok(),
             );
@@ -56,8 +138,8 @@ pub async fn run(
         ProviderId::Gitlab => {
             let v = GitlabVendor::new(
                 Arc::clone(&http),
-                parsed.package.clone(),
-                parsed.host.clone(),
+                package.clone(),
+                host.clone(),
                 r#ref.clone(),
                 std::env::var("GITLAB_TOKEN").ok(),
             );
@@ -79,47 +161,55 @@ pub async fn run(
     };
 
     // 4. Fetch + validate: the repo must actually yield skills.
-    let cache = Cache::new(cwd.join(CACHE_DIR));
-    let materialized = vendor
-        .materialize(&cache)
-        .await
-        .map_err(|e| CliError::provider(e.to_string()))?;
-    let scanned = scan_vendor(materialized, super::locators(false))
-        .await
-        .map_err(|e| {
-            CliError::provider(format!(
-                "add: {}:{} ships no recognizable skills root (declared \
-                 composer.json source or a well-known container): {e}",
-                parsed.from, parsed.package
-            ))
-        })?;
-    if scanned.is_empty() {
+    let scanned = materialize_and_scan(cwd, &vendor).await.map_err(|e| {
+        CliError::provider(format!(
+            "add: {from}:{package} ships no recognizable skills root (declared \
+             composer.json source or a well-known container): {e}"
+        ))
+    })?;
+    if scanned == 0 {
         return Err(CliError::provider(format!(
-            "add: {}:{} @ {resolved} ships no skills - refusing to register it as a donor",
-            parsed.from, parsed.package
+            "add: {from}:{package} @ {resolved} ships no skills - refusing to register it as a donor"
         )));
     }
 
     // 5. Upsert into skills.json.
     upsert_manifest_entry(
         cwd,
-        parsed.from.as_str(),
-        &parsed.package,
-        parsed.host.as_deref(),
+        from.as_str(),
+        &package,
+        host.as_deref(),
         stored_ref.as_deref(),
+        None,
         &skills,
     )?;
     println!(
-        "Registered {}:{}{}",
-        parsed.from,
-        parsed.package,
+        "Registered {from}:{package}{}",
         match &stored_ref {
             Some(r) => format!(" @ {r}"),
             None => String::new(),
         }
     );
 
-    // 6. Sync.
+    sync_after_add(cwd).await
+}
+
+/// Materialize + scan a candidate donor, returning the number of skills it
+/// ships. Errors carry the raw scan failure for the caller to wrap.
+async fn materialize_and_scan(cwd: &Path, vendor: &Arc<dyn Vendor>) -> Result<usize, String> {
+    let cache = Cache::new(cwd.join(CACHE_DIR));
+    let materialized = vendor
+        .materialize(&cache)
+        .await
+        .map_err(|e| e.to_string())?;
+    let scanned = scan_vendor(materialized, super::locators(false))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(scanned.len())
+}
+
+/// The trailing full `update` run shared by both add paths.
+async fn sync_after_add(cwd: &Path) -> Result<(), CliError> {
     super::update::run(
         cwd,
         /* dry_run */ false,
@@ -138,9 +228,10 @@ pub async fn run(
     .await
 }
 
-/// Insert or update the `sources[]` entry (uniqueness key:
-/// `from|host|package`), preserving the rest of the manifest. The file is
-/// rewritten with 2-space indentation.
+/// Insert or update a `sources[]` entry, preserving the rest of the manifest.
+/// The uniqueness key is `dir|default|<normalized path>` for `dir` entries and
+/// `from|host|package` otherwise (mirroring the manifest validator). The file
+/// is rewritten with 2-space indentation.
 ///
 /// Auto-migration: a manifest that still uses the deprecated `remote` key
 /// (and no `sources`) is upgraded in place — the key is renamed to
@@ -152,11 +243,12 @@ fn upsert_manifest_entry(
     package: &str,
     host: Option<&str>,
     stored_ref: Option<&str>,
+    path: Option<&str>,
     skills: &[String],
 ) -> Result<(), CliError> {
-    let path = cwd.join(MANIFEST_NAME);
-    let mut doc: Value = if path.is_file() {
-        let raw = std::fs::read_to_string(&path)
+    let manifest_path = cwd.join(MANIFEST_NAME);
+    let mut doc: Value = if manifest_path.is_file() {
+        let raw = std::fs::read_to_string(&manifest_path)
             .map_err(|e| CliError::config(format!("cannot read {MANIFEST_NAME}: {e}")))?;
         serde_json::from_str(&raw).map_err(|e| CliError::config(format!("{MANIFEST_NAME}: {e}")))?
     } else {
@@ -193,18 +285,32 @@ fn upsert_manifest_entry(
         )));
     };
 
+    // Uniqueness key mirrors `validate_source_entry`: `dir` entries key on the
+    // normalized `path` (host is always `default`, no ref); everything else
+    // keys on `from|host|package`.
     let key = |entry: &Map<String, Value>| -> String {
-        format!(
-            "{}|{}|{}",
-            entry.get("from").and_then(Value::as_str).unwrap_or(""),
-            entry
-                .get("host")
-                .and_then(Value::as_str)
-                .unwrap_or("default"),
-            entry.get("package").and_then(Value::as_str).unwrap_or(""),
-        )
+        let efrom = entry.get("from").and_then(Value::as_str).unwrap_or("");
+        if efrom == "dir" {
+            format!(
+                "dir|default|{}",
+                normalize_declared(entry.get("path").and_then(Value::as_str).unwrap_or(""))
+            )
+        } else {
+            format!(
+                "{efrom}|{}|{}",
+                entry
+                    .get("host")
+                    .and_then(Value::as_str)
+                    .unwrap_or("default"),
+                entry.get("package").and_then(Value::as_str).unwrap_or(""),
+            )
+        }
     };
-    let new_key = format!("{from}|{}|{package}", host.unwrap_or("default"));
+    let new_key = if from == "dir" {
+        format!("dir|default|{}", normalize_declared(path.unwrap_or("")))
+    } else {
+        format!("{from}|{}|{package}", host.unwrap_or("default"))
+    };
 
     // Merge policy on re-add: the fresh ref decision wins; an existing
     // allowlist survives (even an empty one — "pulls nothing" is a
@@ -236,12 +342,16 @@ fn upsert_manifest_entry(
 
     let mut entry = Map::new();
     entry.insert("from".to_string(), json!(from));
-    entry.insert("package".to_string(), json!(package));
-    if let Some(host) = host {
-        entry.insert("host".to_string(), json!(host));
-    }
-    if let Some(r) = stored_ref {
-        entry.insert("ref".to_string(), json!(r));
+    if from == "dir" {
+        entry.insert("path".to_string(), json!(path.unwrap_or("")));
+    } else {
+        entry.insert("package".to_string(), json!(package));
+        if let Some(host) = host {
+            entry.insert("host".to_string(), json!(host));
+        }
+        if let Some(r) = stored_ref {
+            entry.insert("ref".to_string(), json!(r));
+        }
     }
     // An absent allowlist means "all skills" and must stay absent unless
     // the user asked for one (or one already existed).
@@ -261,7 +371,7 @@ fn upsert_manifest_entry(
     Manifest::parse(&rendered).map_err(|e| {
         CliError::config(format!("refusing to write an invalid {MANIFEST_NAME}: {e}"))
     })?;
-    std::fs::write(&path, rendered)
+    std::fs::write(&manifest_path, rendered)
         .map_err(|e| CliError::config(format!("cannot write {MANIFEST_NAME}: {e}")))?;
     Ok(())
 }

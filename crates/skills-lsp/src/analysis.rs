@@ -28,7 +28,7 @@ use skills_core::domain::{NoteKind, Origin, ProviderId, ScannedSkill, VendorRef}
 use skills_core::error::MaterializeError;
 use skills_core::lockfile::Lockfile;
 use skills_core::manifest::{Manifest, PathSeg, SourceEntry};
-use skills_core::paths::normalize_rel;
+use skills_core::paths::{join_declared, normalize_declared};
 use skills_core::pipeline::ctx::{CACHE_DIR, Ctx, RunOptions};
 use skills_core::pipeline::{plan, resolve, scan, trust};
 use skills_core::traits::{Cache, SkillLocator};
@@ -364,7 +364,7 @@ async fn dry_pipeline(
         let Some(donor) = vendors
             .iter()
             .map(|v| v.name.as_str())
-            .find(|name| donor_name_matches(entry, name))
+            .find(|name| donor_name_matches(entry, &ctx.project_root, name))
         else {
             continue;
         };
@@ -411,7 +411,7 @@ async fn dry_pipeline(
                     .vendors
                     .iter()
                     .filter_map(|vendor| {
-                        source_index_for_name(&ctx.manifest, vendor.as_str())
+                        source_index_for_name(&ctx.manifest, &ctx.project_root, vendor.as_str())
                             .and_then(|idx| span.range_of(&source_path(sources_key, idx)))
                     })
                     .collect();
@@ -431,9 +431,10 @@ async fn dry_pipeline(
         }
         Err(skills_core::error::ResolveError::DangerousName(dangerous)) => {
             for danger in dangerous {
-                let range = source_index_for_name(&ctx.manifest, danger.vendor.as_str())
-                    .and_then(|idx| span.range_of(&source_path(sources_key, idx)))
-                    .unwrap_or_else(|| span.first_line());
+                let range =
+                    source_index_for_name(&ctx.manifest, &ctx.project_root, danger.vendor.as_str())
+                        .and_then(|idx| span.range_of(&source_path(sources_key, idx)))
+                        .unwrap_or_else(|| span.first_line());
                 diags.push(diag(
                     range,
                     DiagnosticSeverity::ERROR,
@@ -509,17 +510,24 @@ fn source_identifier(entry: &SourceEntry) -> &str {
 
 /// Whether a donor's vendor name belongs to this entry. By-package/by-url
 /// donors are named after their manifest identifier; dir donors after the
-/// `package` override or `dir/<dirname>` of the normalized path.
-fn donor_name_matches(entry: &SourceEntry, vendor_name: &str) -> bool {
+/// `package` override, else the name [`skills_providers::vendor_name_from_dir`]
+/// derives from the declared path (its last two plain segments lowercased, a
+/// single segment prefixed `dir/`, outward `..`/absolute shapes falling back
+/// to the canonical FS `<parent>/<basename>`). The canonical dir is resolved
+/// best-effort: on a canonicalize failure (donor dir gone), the lexically
+/// joined path is passed instead so the declared-derived shapes still match.
+fn donor_name_matches(entry: &SourceEntry, project_root: &Path, vendor_name: &str) -> bool {
     if entry.from == "dir" {
         if let Some(package) = &entry.package {
             return package == vendor_name;
         }
-        return entry
-            .path
-            .as_deref()
-            .and_then(|path| normalize_rel(path).ok())
-            .is_some_and(|norm| vendor_name.strip_prefix("dir/") == norm.rsplit('/').next());
+        let Some(declared) = entry.path.as_deref() else {
+            return false;
+        };
+        let joined = join_declared(project_root, declared);
+        let canonical = std::fs::canonicalize(&joined).unwrap_or(joined);
+        return skills_providers::vendor_name_from_dir(declared, &canonical)
+            .is_some_and(|derived| derived == vendor_name);
     }
     source_identifier(entry) == vendor_name
 }
@@ -528,18 +536,19 @@ fn donor_name_matches(entry: &SourceEntry, vendor_name: &str) -> bool {
 fn source_index_for(manifest: &Manifest, vendor_ref: &VendorRef) -> Option<usize> {
     let entries = manifest.sources();
     if vendor_ref.provider == ProviderId::Dir {
-        // Dir donors: match the origin path against the entry path, both
-        // normalized like the core uniqueness key (`./a` == `a`).
+        // Dir donors: match the origin path against the entry path, both run
+        // through the lenient declared normalizer — the same dedup key the
+        // manifest and provider use (`./a` == `a`, outward `../x` and
+        // absolute paths handled, never fails).
         let Origin::Local { path } = &vendor_ref.origin else {
             return None;
         };
-        let origin_norm = normalize_rel(path).ok()?;
+        let origin_norm = normalize_declared(path);
         return entries.iter().position(|e| {
             e.from == "dir"
                 && e.path
                     .as_deref()
-                    .and_then(|p| normalize_rel(p).ok())
-                    .is_some_and(|norm| norm == origin_norm)
+                    .is_some_and(|p| normalize_declared(p) == origin_norm)
         });
     }
     let identifier = match &vendor_ref.origin {
@@ -580,11 +589,15 @@ fn source_index_for(manifest: &Manifest, vendor_ref: &VendorRef) -> Option<usize
 }
 
 /// The `sources[]` entry a donor's vendor name belongs to.
-fn source_index_for_name(manifest: &Manifest, vendor_name: &str) -> Option<usize> {
+fn source_index_for_name(
+    manifest: &Manifest,
+    project_root: &Path,
+    vendor_name: &str,
+) -> Option<usize> {
     manifest
         .sources()
         .iter()
-        .position(|e| donor_name_matches(e, vendor_name))
+        .position(|e| donor_name_matches(e, project_root, vendor_name))
 }
 
 fn from_matches(from: &str, provider: ProviderId) -> bool {
@@ -631,6 +644,53 @@ fn discover_error_range(manifest: &Manifest, span: &SpanIndex<'_>, message: &str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discover_error_range_anchors_the_new_error_messages_at_the_path() {
+        // The post-PR#29 provider error set (does-not-exist, project-root,
+        // overlap, cannot-resolve) all quote the DECLARED path, so the
+        // quoted-path scan anchors each at the offending entry's `path`.
+        let text = concat!(
+            "{\n",
+            "  \"sources\": [\n",
+            "    { \"from\": \"dir\", \"path\": \"./a\" },\n",
+            "    { \"from\": \"dir\", \"path\": \"./b\" }\n",
+            "  ]\n",
+            "}",
+        );
+        let manifest = Manifest::parse(text).unwrap();
+        let span = SpanIndex::new(text);
+        let path_value = |idx: usize| {
+            span.range_of(&[
+                PathSeg::key("sources"),
+                PathSeg::Index(idx),
+                PathSeg::key("path"),
+            ])
+            .unwrap()
+        };
+
+        // The overlap message quotes both the declared path AND the target;
+        // the declared path is what maps it to entry 1's `path` value.
+        let overlap =
+            "provider dir: sources dir path './b' overlaps the sync target '.agents/skills'";
+        assert_eq!(
+            discover_error_range(&manifest, &span, overlap),
+            path_value(1)
+        );
+
+        let missing = "provider dir: sources dir path does not exist: './a'";
+        assert_eq!(
+            discover_error_range(&manifest, &span, missing),
+            path_value(0)
+        );
+
+        // A message quoting no known path falls back to the file top.
+        let other = "provider dir: something unrelated";
+        assert_eq!(
+            discover_error_range(&manifest, &span, other),
+            span.first_line()
+        );
+    }
 
     #[test]
     fn skill_md_clean_has_no_diags() {

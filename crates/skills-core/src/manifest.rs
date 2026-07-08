@@ -6,6 +6,14 @@
 //! deprecated alias and may not be set together with `sources`. The
 //! published JSON Schema (`resources/skills.schema.json`) mirrors this
 //! model.
+//!
+//! A `dir` source `path` is validated more leniently than the sync-output
+//! paths (`target`/`aliases`/`lock-file`): because syncing from a directory
+//! only *reads* from it, absolute paths and root-escaping `..` are allowed
+//! (a `sources` entry is an explicit act of trust). The one thing forbidden
+//! is self-reference: a `dir` path must not be the project root itself, and
+//! (when it stays inside the root and is therefore lexically comparable) must
+//! not overlap the sync target or an alias.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -14,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ManifestError;
 use crate::lockfile::LOCKFILE_NAME;
-use crate::paths::normalize_rel;
+use crate::paths::{is_absolute_like, normalize_declared, normalize_rel};
 
 pub const MANIFEST_NAME: &str = "skills.json";
 pub const DEFAULT_TARGET: &str = ".agents/skills";
@@ -74,9 +82,12 @@ pub struct SourceEntry {
     #[serde(rename = "ref")]
     pub r#ref: Option<String>,
     pub sha256: Option<String>,
-    /// Filesystem path of a `dir` source donor, relative to the project
-    /// root and confined to it (absolute paths and root-escaping `..` are
-    /// rejected). Only valid with `from: "dir"`.
+    /// Filesystem path of a `dir` source donor. Relative paths resolve from
+    /// the project root; absolute paths (including Windows drive letters) and
+    /// root-escaping `..` are allowed, because syncing from a directory only
+    /// reads from it. The path must not be the project root and must not
+    /// overlap the sync target or an alias (self-reference). Only valid with
+    /// `from: "dir"`.
     pub path: Option<String>,
     /// Tri-state: absent/null = all skills; `[]` = donor registered, pulls
     /// nothing; non-empty = allowlist matched by canonical name.
@@ -453,6 +464,35 @@ impl Manifest {
                 match validate_source_entry(entry) {
                     Err(e) => issues.push(ManifestIssue::new(at(), format!("{key}[{idx}]: {e}"))),
                     Ok(uniq) => {
+                        // Self-reference guard for `dir` sources: reject a
+                        // path that overlaps the sync target or an alias.
+                        // Only lexically comparable (relative, inside-root)
+                        // paths are checked here; absolute/outward paths are
+                        // left for a canonical runtime check in the provider.
+                        if entry.from == "dir"
+                            && let Some(path) = &entry.path
+                        {
+                            let norm = normalize_declared(path);
+                            if is_inside_root(&norm) {
+                                if paths_overlap(&norm, &target_norm) {
+                                    issues.push(ManifestIssue::new(
+                                        at(),
+                                        format!(
+                                            "{key}[{idx}]: dir path '{norm}' overlaps the sync target '{target_norm}'"
+                                        ),
+                                    ));
+                                } else if let Some(alias) =
+                                    alias_norms.iter().find(|a| paths_overlap(&norm, a))
+                                {
+                                    issues.push(ManifestIssue::new(
+                                        at(),
+                                        format!(
+                                            "{key}[{idx}]: dir path '{norm}' overlaps alias '{alias}'"
+                                        ),
+                                    ));
+                                }
+                            }
+                        }
                         if !seen.insert(uniq.clone()) {
                             issues.push(ManifestIssue::new(
                                 at(),
@@ -484,6 +524,25 @@ impl Manifest {
 
         issues
     }
+}
+
+/// Whether a `normalize_declared` result is a relative path confined to the
+/// project root — i.e. lexically comparable to the sync target and aliases
+/// (no absolute prefix, no leading `..`). Only such paths take part in the
+/// self-reference overlap check; absolute/outward paths are handled by a
+/// runtime canonical check in the provider.
+fn is_inside_root(norm: &str) -> bool {
+    !norm.is_empty() && !is_absolute_like(norm) && norm != ".." && !norm.starts_with("../")
+}
+
+/// Whether two normalized, `/`-separated, inside-root paths overlap: equal,
+/// or one is an ancestor of the other (segment-wise prefix in either
+/// direction). `.agents` overlaps `.agents/skills`; `x/y` overlaps `x`.
+fn paths_overlap(a: &str, b: &str) -> bool {
+    let sa: Vec<&str> = a.split('/').collect();
+    let sb: Vec<&str> = b.split('/').collect();
+    let n = sa.len().min(sb.len());
+    sa[..n] == sb[..n]
 }
 
 /// Validate one source entry; returns its uniqueness key
@@ -520,10 +579,19 @@ fn validate_source_entry(entry: &SourceEntry) -> Result<String, String> {
         {
             return Err("'package' must not be empty".to_string());
         }
-        // The path must stay inside the project root: absolute paths
-        // (incl. Windows drive letters) and escaping `..` are rejected.
-        // The normalized form is the uniqueness identifier.
-        let identifier = normalize_rel(path).map_err(|e| format!("invalid path: {e}"))?;
+        // A `dir` donor is read-only, so its path may be absolute or point
+        // outside the project root. The only shape rejected here is the
+        // project root itself (`.`, `./`, `a/..`, …). The normalized form is
+        // the uniqueness identifier. The self-reference guard (overlap with
+        // the sync target/aliases) needs manifest-level context and lives in
+        // `validate_issues`.
+        if path.trim().is_empty() {
+            return Err("dir path must not be empty".to_string());
+        }
+        let identifier = normalize_declared(path);
+        if identifier.is_empty() {
+            return Err("dir path must not be the project root".to_string());
+        }
         return Ok(format!("{from}|default|{identifier}"));
     }
     if entry.path.is_some() {
@@ -877,20 +945,63 @@ mod tests {
     #[test]
     fn dir_source_empty_path_rejected() {
         let e = err(r#"{ "sources": [ { "from": "dir", "path": "" } ] }"#);
-        assert!(e.contains("invalid path"), "{e}");
+        assert!(e.contains("must not be empty"), "{e}");
         let e = err(r#"{ "sources": [ { "from": "dir", "path": "  " } ] }"#);
-        assert!(e.contains("invalid path"), "{e}");
+        assert!(e.contains("must not be empty"), "{e}");
     }
 
     #[test]
-    fn dir_source_absolute_or_escaping_path_rejected() {
-        // Root confinement: a dir source may not leave the project root.
-        let e = err(r#"{ "sources": [ { "from": "dir", "path": "/abs" } ] }"#);
-        assert!(e.contains("invalid path"), "{e}");
-        let e = err(r#"{ "sources": [ { "from": "dir", "path": "C:\\abs" } ] }"#);
-        assert!(e.contains("invalid path"), "{e}");
-        let e = err(r#"{ "sources": [ { "from": "dir", "path": "../x" } ] }"#);
-        assert!(e.contains("invalid path"), "{e}");
+    fn dir_source_project_root_rejected() {
+        // `.`, `./` and `a/..` all normalize to the project root.
+        let e = err(r#"{ "sources": [ { "from": "dir", "path": "." } ] }"#);
+        assert!(e.contains("must not be the project root"), "{e}");
+        let e = err(r#"{ "sources": [ { "from": "dir", "path": "./" } ] }"#);
+        assert!(e.contains("must not be the project root"), "{e}");
+        let e = err(r#"{ "sources": [ { "from": "dir", "path": "a/.." } ] }"#);
+        assert!(e.contains("must not be the project root"), "{e}");
+    }
+
+    #[test]
+    fn dir_source_absolute_or_escaping_path_accepted() {
+        // A dir donor is read-only, so it may be absolute or leave the root.
+        Manifest::parse(r#"{ "sources": [ { "from": "dir", "path": "C:\\shared\\skills" } ] }"#)
+            .unwrap();
+        Manifest::parse(r#"{ "sources": [ { "from": "dir", "path": "/opt/skills" } ] }"#).unwrap();
+        Manifest::parse(r#"{ "sources": [ { "from": "dir", "path": "../sibling/skills" } ] }"#)
+            .unwrap();
+    }
+
+    #[test]
+    fn dir_source_overlapping_target_rejected() {
+        // Equal to the (default) target.
+        let e = err(r#"{ "sources": [ { "from": "dir", "path": "./.agents/skills" } ] }"#);
+        assert!(e.contains("overlaps the sync target"), "{e}");
+        // Ancestor of the target.
+        let e = err(r#"{ "sources": [ { "from": "dir", "path": ".agents" } ] }"#);
+        assert!(e.contains("overlaps the sync target"), "{e}");
+        // Descendant of the target.
+        let e = err(r#"{ "sources": [ { "from": "dir", "path": ".agents/skills/x" } ] }"#);
+        assert!(e.contains("overlaps the sync target"), "{e}");
+        // Against an explicit custom target.
+        let e =
+            err(r#"{ "target": "out/skills", "sources": [ { "from": "dir", "path": "out" } ] }"#);
+        assert!(e.contains("overlaps the sync target 'out/skills'"), "{e}");
+    }
+
+    #[test]
+    fn dir_source_overlapping_alias_rejected() {
+        let e = err(
+            r#"{ "aliases": [".claude/skills"], "sources": [ { "from": "dir", "path": "./.claude/skills/x" } ] }"#,
+        );
+        assert!(e.contains("overlaps alias '.claude/skills'"), "{e}");
+    }
+
+    #[test]
+    fn dir_source_outside_root_skips_overlap_check() {
+        // Absolute/outward paths are not lexically comparable to the target,
+        // so they pass validation even if they textually resemble it.
+        Manifest::parse(r#"{ "sources": [ { "from": "dir", "path": "../.agents/skills" } ] }"#)
+            .unwrap();
     }
 
     #[test]
@@ -904,6 +1015,12 @@ mod tests {
         let e = err(r#"{ "sources": [
                 { "from": "dir", "path": "./a" },
                 { "from": "dir", "path": "a" }
+            ] }"#);
+        assert!(e.contains("duplicate entry"), "{e}");
+        // Outward donors dedup too: `../x` and `..\x` are the same donor.
+        let e = err(r#"{ "sources": [
+                { "from": "dir", "path": "../x" },
+                { "from": "dir", "path": "..\\x" }
             ] }"#);
         assert!(e.contains("duplicate entry"), "{e}");
     }

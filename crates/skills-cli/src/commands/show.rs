@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use skills_core::domain::NoteKind;
+use skills_core::domain::{NoteKind, TrustBasis};
 use skills_core::error::PipelineError;
 use skills_core::lockfile::{SyncStatus, sync_status};
 use skills_core::paths::rel_to_path;
@@ -41,6 +41,12 @@ pub async fn run(cwd: &Path, from: Option<String>, filters: RawFilters) -> Resul
             // Project/CLI-trusted donors are not annotated: the user's own
             // explicit decision needs no callout.
             Some(TrustSource::Project) | Some(TrustSource::Cli) | None => {}
+        }
+        // A `sources[]` donor is trusted because it is declared in
+        // skills.json — labeled so a coincidentally-matching trust-list entry
+        // never takes silent credit for it.
+        if kept.vendor_ref.trust == TrustBasis::UserDeclared {
+            chips.push("[declared in skills.json]");
         }
         if kept.discovered {
             chips.push("[discovered]");
