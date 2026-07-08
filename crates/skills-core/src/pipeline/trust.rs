@@ -31,18 +31,66 @@ const BUILTIN_COMPOSER_TRUST: &str = include_str!(concat!(
     "/../../resources/trusted-composer.txt"
 ));
 
-/// Parse the embedded built-in list: one pattern per line, `#` comments and
-/// blank lines ignored.
-pub fn builtin_trusted() -> Vec<VendorPattern> {
-    BUILTIN_COMPOSER_TRUST
-        .lines()
+/// Built-in trusted-scopes list for the npm provider, embedded from
+/// `resources/trusted-npm.txt` (SPEC §8).
+const BUILTIN_NPM_TRUST: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../resources/trusted-npm.txt"
+));
+
+/// Built-in trusted-namespaces list for the go provider, embedded from
+/// `resources/trusted-go.txt` (SPEC §8).
+const BUILTIN_GO_TRUST: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../resources/trusted-go.txt"
+));
+
+/// Meaningful lines of an embedded built-in list: `#` comments and blank lines
+/// dropped, surrounding whitespace trimmed.
+fn trust_lines(raw: &'static str) -> impl Iterator<Item = &'static str> {
+    raw.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
+}
+
+/// Parse the embedded composer built-in list into vendor patterns.
+///
+/// This is the only built-in list the live pipeline consumes today: npm and go
+/// patterns are exposed raw via [`builtin_trusted_raw`] and their grammars are
+/// enforced only when those providers land (SPEC §8 / spec-dependencies.md
+/// §1.3).
+pub fn builtin_trusted() -> Vec<VendorPattern> {
+    trust_lines(BUILTIN_COMPOSER_TRUST)
         .map(|line| {
             VendorPattern::parse(line)
                 .expect("resources/trusted-composer.txt must contain only valid patterns")
         })
         .collect()
+}
+
+/// Raw built-in trust patterns for a package manager, one entry per meaningful
+/// line (comments and blanks dropped, whitespace trimmed).
+///
+/// - `"composer"` → composer lines (same strings as [`builtin_trusted`])
+/// - `"npm"` → npm scope patterns
+/// - `"go"` → go module-path prefix patterns
+/// - anything else → empty
+///
+/// Keyed by package-manager id (`composer`/`npm`/`go`) rather than
+/// [`crate::domain::ProviderId`], which enumerates vendor *providers*
+/// (`dir`/`composer`/`github`/…) and has no npm/go variants.
+///
+/// The npm and go grammars are only structural today; they are validated when
+/// their providers land. The live pipeline consumes only the composer list
+/// (SPEC §8 / spec-dependencies.md §1.3).
+pub fn builtin_trusted_raw(manager: &str) -> Vec<&'static str> {
+    let raw = match manager {
+        "composer" => BUILTIN_COMPOSER_TRUST,
+        "npm" => BUILTIN_NPM_TRUST,
+        "go" => BUILTIN_GO_TRUST,
+        _ => return Vec::new(),
+    };
+    trust_lines(raw).collect()
 }
 
 /// Which trust list approved a kept donor — used by `skills show` for the
@@ -336,6 +384,84 @@ mod tests {
                 "yiisoft/*",
             ]
         );
+    }
+
+    #[test]
+    fn builtin_npm_raw_has_expected_entries() {
+        let npm = builtin_trusted_raw("npm");
+        assert_eq!(
+            npm,
+            [
+                "@anthropic-ai/*",
+                "@modelcontextprotocol/*",
+                "@openai/*",
+                "@google/*",
+                "@angular/*",
+                "@vue/*",
+                "@sveltejs/*",
+                "@nestjs/*",
+                "@nuxt/*",
+                "@astrojs/*",
+                "@remix-run/*",
+                "@vercel/*",
+            ]
+        );
+    }
+
+    #[test]
+    fn builtin_go_raw_has_expected_entries() {
+        let go = builtin_trusted_raw("go");
+        assert_eq!(
+            go,
+            [
+                "github.com/anthropics/*",
+                "github.com/modelcontextprotocol/*",
+                "github.com/golang/*",
+                "golang.org/x/*",
+                "google.golang.org/*",
+                "github.com/spiral/*",
+                "github.com/roadrunner-server/*",
+                "github.com/temporalio/*",
+                "github.com/grpc/*",
+                "github.com/uber-go/*",
+            ]
+        );
+    }
+
+    #[test]
+    fn builtin_raw_lists_are_clean_and_composer_matches_parsed() {
+        // Composer raw list matches the parsed patterns 1:1.
+        let composer_raw = builtin_trusted_raw("composer");
+        let parsed = builtin_trusted();
+        let composer_parsed: Vec<&str> = parsed.iter().map(VendorPattern::as_str).collect();
+        assert_eq!(composer_raw, composer_parsed);
+
+        for manager in ["composer", "npm", "go"] {
+            let list = builtin_trusted_raw(manager);
+            assert!(
+                list.iter().all(|e| !e.is_empty()),
+                "{manager}: no empty entries"
+            );
+            let mut sorted = list.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(sorted.len(), list.len(), "{manager}: no duplicate entries");
+        }
+
+        // Scoped-only posture: every npm entry is a scope wildcard.
+        assert!(
+            builtin_trusted_raw("npm")
+                .iter()
+                .all(|e| e.starts_with('@') && e.ends_with("/*"))
+        );
+        // Go entries are module-path prefixes: at least one path separator.
+        assert!(builtin_trusted_raw("go").iter().all(|e| e.contains('/')));
+    }
+
+    #[test]
+    fn builtin_raw_unknown_manager_is_empty() {
+        assert!(builtin_trusted_raw("cargo").is_empty());
+        assert!(builtin_trusted_raw("").is_empty());
     }
 
     #[test]
