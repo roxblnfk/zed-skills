@@ -9,9 +9,9 @@
 //! - `Declared(source)` (composer donors with `extra.skills.source`) — the
 //!   declared directory is the skills root ([`ComposerDeclaredLocator`]).
 //! - `Probe` (remote/url donors) — probe a shipped `composer.json`
-//!   declaration, then the well-known containers; the recursive fallback
-//!   applies only when discovery is enabled.
-//! - `Discovery` (undeclared composer donors admitted via discovery) —
+//!   declaration, then the well-known containers, then the recursive
+//!   fallback (always applied when the earlier stages found nothing).
+//! - `Discovery` (undeclared composer donors shipping skills) —
 //!   well-known containers first; the bounded recursive fallback only when
 //!   the containers yielded nothing.
 
@@ -203,27 +203,24 @@ impl SkillLocator for WellKnownLocator {
 /// the first `SKILL.md` on a branch stops descent.
 ///
 /// Applies to discovery donors (undeclared composer packages — the chain
-/// only reaches this point when the containers yielded nothing) and, when
-/// the global discovery flag is on, to remote/url donors with neither a
-/// declared source nor a well-known container.
-pub struct RecursiveFallbackLocator {
-    /// Effective discovery flag of the run — gates the remote/url path.
-    pub discovery: bool,
-}
+/// only reaches this point when the containers yielded nothing) and,
+/// unconditionally, to remote/url donors with neither a declared source nor
+/// a well-known container.
+#[derive(Default)]
+pub struct RecursiveFallbackLocator;
 
 impl RecursiveFallbackLocator {
-    pub fn new(discovery: bool) -> Self {
-        RecursiveFallbackLocator { discovery }
+    pub fn new() -> Self {
+        RecursiveFallbackLocator
     }
 }
 
 impl SkillLocator for RecursiveFallbackLocator {
     fn locate(&self, vendor: &MaterializedVendor) -> Result<Located, ScanError> {
-        let applies = match vendor.source_hint {
-            SourceHint::Discovery => true,
-            SourceHint::Probe => self.discovery,
-            _ => false,
-        };
+        let applies = matches!(
+            vendor.source_hint,
+            SourceHint::Discovery | SourceHint::Probe
+        );
         if !applies {
             return Ok(Located::NotApplicable);
         }
@@ -565,7 +562,7 @@ mod tests {
     fn fallback_applies_to_discovery_vendors() {
         let tmp = tempfile::tempdir().unwrap();
         make_skill(tmp.path(), "lib/prompts/helper");
-        let located = RecursiveFallbackLocator::new(false)
+        let located = RecursiveFallbackLocator::new()
             .locate(&discovery_vendor(tmp.path()))
             .unwrap();
         assert_eq!(
@@ -577,18 +574,12 @@ mod tests {
     }
 
     #[test]
-    fn fallback_gates_remote_vendors_on_the_discovery_flag() {
+    fn fallback_applies_to_remote_vendors_unconditionally() {
         let tmp = tempfile::tempdir().unwrap();
         make_skill(tmp.path(), "lib/helper");
         let vendor = remote_vendor(tmp.path());
         assert_eq!(
-            RecursiveFallbackLocator::new(false)
-                .locate(&vendor)
-                .unwrap(),
-            Located::NotApplicable
-        );
-        assert_eq!(
-            RecursiveFallbackLocator::new(true).locate(&vendor).unwrap(),
+            RecursiveFallbackLocator::new().locate(&vendor).unwrap(),
             Located::Found(vec![SkillsRoot {
                 path: tmp.path().join("lib")
             }])
@@ -600,7 +591,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         make_skill(tmp.path(), "lib/helper");
         assert_eq!(
-            RecursiveFallbackLocator::new(true)
+            RecursiveFallbackLocator::new()
                 .locate(&local_vendor(tmp.path()))
                 .unwrap(),
             Located::NotApplicable

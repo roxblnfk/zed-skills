@@ -46,7 +46,7 @@ pub async fn run(
     }
 
     let providers = super::providers(from.as_deref())?;
-    let locators = super::locators(ctx.discovery_enabled());
+    let locators = super::locators();
     let chain = super::audit_chain(&ctx.manifest)?;
     let report = run_update(&ctx, &providers, &locators, &chain).await?;
 

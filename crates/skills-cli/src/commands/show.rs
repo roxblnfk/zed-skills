@@ -58,7 +58,7 @@ pub async fn run(cwd: &Path, from: Option<String>, filters: RawFilters) -> Resul
     let vendors = materialize::materialize_all(&ctx, kept_refs)
         .await
         .map_err(PipelineError::from)?;
-    let scanned = scan::locate_and_scan(&vendors, &super::locators(ctx.discovery_enabled()))
+    let scanned = scan::locate_and_scan(&vendors, &super::locators())
         .await
         .map_err(PipelineError::from)?;
 
@@ -104,7 +104,6 @@ pub async fn run(cwd: &Path, from: Option<String>, filters: RawFilters) -> Resul
                 SkipReason::Untrusted => "untrusted".to_string(),
                 SkipReason::Malformed(detail) => format!("malformed: {detail}"),
                 SkipReason::FilteredOut => "filtered-out".to_string(),
-                SkipReason::NotDeclared => "not-declared".to_string(),
             },
         })
         .collect();

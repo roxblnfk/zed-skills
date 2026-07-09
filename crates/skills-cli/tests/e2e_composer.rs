@@ -406,36 +406,37 @@ fn composer_false_disables_the_vendor_walk() {
     assert!(!out.contains("acme/"), "{out}");
 }
 
-// ── discovery ───────────────────────────────────────────────────────────────
+// ── discovery (always on; undeclared donors are admitted subject to trust) ────
 
 #[test]
-fn discovery_is_off_by_default_and_hints_about_candidates() {
+fn undeclared_but_untrusted_donors_are_not_synced_and_get_no_hint() {
     let project = fixture_project("sandbox");
     let out = stdout_of(skills_cmd(project.path()).arg("update").assert().success());
+    // Discovery is always on, but these undeclared donors are untrusted, so
+    // their skills stay out — and there is no legacy `--discovery` hint.
     assert!(!has_skill(project.path(), "auto-skill"));
     assert!(!has_skill(project.path(), "hidden-claude"));
-    assert!(out.contains("[hint]"), "{out}");
-    assert!(out.contains("--discovery"), "{out}");
+    assert!(!out.contains("--discovery"), "{out}");
 }
 
 #[test]
-fn discovery_flag_includes_undeclared_skills_from_trusted_vendor_without_hint() {
+fn undeclared_skills_of_a_trusted_vendor_are_synced() {
     let project = fixture_project("sandbox");
     let out = stdout_of(
         skills_cmd(project.path())
-            .args(["update", "--discovery", "--trust=acme/skills-undeclared"])
+            .args(["update", "--trust=acme/skills-undeclared"])
             .assert()
             .success(),
     );
     assert!(has_skill(project.path(), "auto-skill"));
-    assert!(!out.contains("[hint]"), "{out}");
+    assert!(!out.contains("--discovery"), "{out}");
 }
 
 #[test]
 fn discovery_finds_dot_claude_and_catalog_layout_of_undeclared_package() {
     let project = fixture_project("sandbox");
     skills_cmd(project.path())
-        .args(["update", "--discovery", "--trust=nested/*"])
+        .args(["update", "--trust=nested/*"])
         .assert()
         .success();
     assert!(has_skill(project.path(), "hidden-claude"));
@@ -443,20 +444,22 @@ fn discovery_finds_dot_claude_and_catalog_layout_of_undeclared_package() {
 }
 
 #[test]
-fn recursive_fallback_skills_gated_behind_discovery() {
+fn recursive_fallback_skills_are_synced_when_trusted() {
     let project = fixture_project("sandbox");
+    // Untrusted: the recursive-fallback skill stays out even though discovery
+    // is on.
     skills_cmd(project.path()).arg("update").assert().success();
     assert!(!has_skill(project.path(), "weird-place"));
 
     skills_cmd(project.path())
-        .args(["update", "--discovery", "--trust=oddball/*"])
+        .args(["update", "--trust=oddball/*"])
         .assert()
         .success();
     assert!(has_skill(project.path(), "weird-place"));
 }
 
 #[test]
-fn naming_undeclared_package_auto_enables_discovery_for_it_only() {
+fn naming_undeclared_package_admits_it_and_filters_out_the_rest() {
     let project = fixture_project("sandbox");
     let out = stdout_of(
         skills_cmd(project.path())
@@ -465,17 +468,18 @@ fn naming_undeclared_package_auto_enables_discovery_for_it_only() {
             .success(),
     );
     assert!(has_skill(project.path(), "auto-skill"));
-    // Other undeclared packages stay out and still drive the hint.
+    // A positional filter narrows the run to the named package; the rest are
+    // filtered out (no legacy discovery hint).
     assert!(!has_skill(project.path(), "hidden-claude"));
-    assert!(out.contains("[hint]"), "{out}");
+    assert!(!out.contains("--discovery"), "{out}");
 }
 
 #[test]
-fn manifest_discovery_flag_enables_the_chain() {
+fn manifest_trusted_list_admits_undeclared_donors() {
     let project = fixture_project("sandbox");
     set_manifest(
         project.path(),
-        r#"{ "discovery": true, "dependencies": { "composer": { "trusted": ["acme/*", "nested/*", "oddball/*"] } } }"#,
+        r#"{ "dependencies": { "composer": { "trusted": ["acme/*", "nested/*", "oddball/*"] } } }"#,
     );
     skills_cmd(project.path()).arg("update").assert().success();
     assert_eq!(
@@ -492,6 +496,25 @@ fn manifest_discovery_flag_enables_the_chain() {
             "weird-place",
         ]
     );
+}
+
+#[test]
+fn manifest_discovery_key_is_a_config_error() {
+    // Hard break: discovery is always-on now; the former opt-in key is a fatal
+    // unknown field, not silently ignored.
+    let project = fixture_project("sandbox");
+    set_manifest(
+        project.path(),
+        r#"{ "discovery": true, "dependencies": { "composer": { "trusted": ["acme/*"] } } }"#,
+    );
+    let assert = skills_cmd(project.path())
+        .arg("update")
+        .assert()
+        .failure()
+        .code(1);
+    let stderr = stderr_of(assert);
+    assert!(stderr.contains("unknown field"), "{stderr}");
+    assert!(!project.path().join(".agents").exists());
 }
 
 // ── show ────────────────────────────────────────────────────────────────────
@@ -569,24 +592,26 @@ fn show_lists_malformed_donor_with_reason_detail() {
 }
 
 #[test]
-fn show_lists_undeclared_donor_as_not_declared_and_hints() {
+fn show_lists_undeclared_untrusted_donor_as_untrusted_without_hint() {
     let project = fixture_project("sandbox");
     let out = stdout_of(skills_cmd(project.path()).arg("show").assert().success());
+    // An undeclared donor is now admitted past the declaration gate but still
+    // untrusted, so it lands in Skipped as `untrusted` — no discovery hint.
     assert!(!out.contains("auto-skill"), "{out}");
     let undeclared = out
         .lines()
         .find(|l| l.contains("acme/skills-undeclared"))
         .unwrap_or_default();
-    assert!(undeclared.contains("not-declared"), "{out}");
-    assert!(out.contains("--discovery"), "{out}");
+    assert!(undeclared.contains("untrusted"), "{out}");
+    assert!(!out.contains("--discovery"), "{out}");
 }
 
 #[test]
-fn show_discovery_flag_promotes_undeclared_donor_with_discovered_mark() {
+fn show_promotes_trusted_undeclared_donor_with_discovered_mark() {
     let project = fixture_project("sandbox");
     let out = stdout_of(
         skills_cmd(project.path())
-            .args(["show", "--discovery", "--trust=acme/skills-undeclared"])
+            .args(["show", "--trust=acme/skills-undeclared"])
             .assert()
             .success(),
     );

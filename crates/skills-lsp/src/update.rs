@@ -29,7 +29,7 @@ pub async fn run_real_update(project_root: &Path) -> Result<SyncReport, String> 
         Arc::new(GitlabProvider::from_env(Arc::clone(&http))),
         Arc::new(UrlProvider::new(http)),
     ];
-    let locators = locator_chain(ctx.discovery_enabled());
+    let locators = locator_chain();
     let chain = skills_audit::build_chain(&ctx.manifest).map_err(|e| e.to_string())?;
     let report = run_update(&ctx, &providers, &locators, &chain)
         .await

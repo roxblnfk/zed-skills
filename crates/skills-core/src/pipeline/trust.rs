@@ -5,13 +5,9 @@
 //!
 //! 1. Malformed donors (invalid `extra.skills.source`) are dropped with a
 //!    `[warn]` note — one bad vendor never blocks the rest.
-//! 2. Undeclared donors (discovery candidates) are admitted only when
-//!    discovery is enabled globally (manifest flag / `--discovery`) or the
-//!    donor was named positionally. Left-out candidates drive the trailing
-//!    `--discovery` hint.
-//! 3. Positional filters (`skills update acme/foo` / `acme/*`) restrict the
+//! 2. Positional filters (`skills update acme/foo` / `acme/*`) restrict the
 //!    run to matching donors; naming a donor is an implicit trust grant.
-//! 4. Everything else must clear the effective trust list:
+//! 3. Everything else must clear the effective trust list:
 //!    `dependencies.composer.trusted-replace: true` ? (project ∪ --trust) :
 //!    (builtin ∪ project ∪ --trust). User-declared donors (`sources[]`, incl.
 //!    `dir` entries) and direct
@@ -108,7 +104,8 @@ pub struct KeptDonor {
     pub vendor_ref: VendorRef,
     /// `None` for user-declared donors and positional grants.
     pub trust_source: Option<TrustSource>,
-    /// Undeclared donor admitted via discovery (`[discovered]` in show).
+    /// Undeclared donor: its skills are located by the always-on well-known /
+    /// recursive fallback (`[discovered]` in show).
     pub discovered: bool,
 }
 
@@ -121,8 +118,6 @@ pub enum SkipReason {
     Malformed(String),
     /// Dropped by a positional package filter.
     FilteredOut,
-    /// Discovery candidate left out because discovery is off.
-    NotDeclared,
 }
 
 #[derive(Debug, Clone)]
@@ -137,7 +132,7 @@ pub struct TrustOutcome {
     pub kept: Vec<KeptDonor>,
     pub skipped: Vec<SkippedDonor>,
     /// Diagnostics for the update report (`[warn]` malformed, `[skip]`
-    /// untrusted, trailing `[hint]` about `--discovery`).
+    /// untrusted).
     pub notes: Vec<Note>,
 }
 
@@ -152,7 +147,6 @@ impl TrustOutcome {
 pub fn trust_filter(ctx: &Ctx, vendors: Vec<VendorRef>) -> Result<TrustOutcome, TrustError> {
     let filters = &ctx.run.packages;
     let cli = &ctx.run.trust;
-    let discovery_on = ctx.discovery_enabled();
     let replace = ctx.manifest.trusted_replace();
     let project = ctx.manifest.trusted_patterns();
     let builtin = if replace {
@@ -163,7 +157,6 @@ pub fn trust_filter(ctx: &Ctx, vendors: Vec<VendorRef>) -> Result<TrustOutcome, 
 
     let mut outcome = TrustOutcome::default();
     let mut untrusted: Vec<VendorName> = Vec::new();
-    let mut candidates: usize = 0;
 
     for donor in vendors {
         let name = donor.name.clone();
@@ -182,17 +175,9 @@ pub fn trust_filter(ctx: &Ctx, vendors: Vec<VendorRef>) -> Result<TrustOutcome, 
 
         let named = !filters.is_empty() && matches_any(filters, name.as_str());
 
-        // 2. Discovery gate for undeclared candidates.
-        if donor.status == DonorStatus::Undeclared && !discovery_on && !named {
-            candidates += 1;
-            outcome.skipped.push(SkippedDonor {
-                name,
-                reason: SkipReason::NotDeclared,
-            });
-            continue;
-        }
-
-        // 3. Positional package filter.
+        // 2. Positional package filter. Undeclared donors are always admitted
+        // past this point (discovery is always-on); they still have to clear
+        // the trust list below.
         if !filters.is_empty() && !named {
             outcome.skipped.push(SkippedDonor {
                 name,
@@ -201,7 +186,7 @@ pub fn trust_filter(ctx: &Ctx, vendors: Vec<VendorRef>) -> Result<TrustOutcome, 
             continue;
         }
 
-        // 4. Trust. Positional naming is an implicit grant.
+        // 3. Trust. Positional naming is an implicit grant.
         let approved = named
             || match donor.trust {
                 TrustBasis::UserDeclared => true,
@@ -244,12 +229,6 @@ pub fn trust_filter(ctx: &Ctx, vendors: Vec<VendorRef>) -> Result<TrustOutcome, 
         outcome.notes.push(Note::skip(format!(
             "{name}: untrusted package not synced (add it to \
              \"dependencies.composer.trusted\" in skills.json or rerun with --trust={name})"
-        )));
-    }
-    if candidates > 0 && !discovery_on {
-        outcome.notes.push(Note::hint(format!(
-            "{candidates} package(s) ship undeclared skills; rerun with --discovery to include \
-             them, or set \"discovery\": true in skills.json"
         )));
     }
 
@@ -648,36 +627,11 @@ mod tests {
     }
 
     #[test]
-    fn undeclared_candidates_hint_without_discovery() {
+    fn undeclared_donors_are_always_admitted_when_trusted() {
+        // Discovery is always-on: an undeclared donor no longer needs an
+        // opt-in flag. A trusted (here: direct-dependency) undeclared donor is
+        // kept unconditionally and flagged `discovered`, with no trailing hint.
         let (_tmp, ctx) = ctx_with("{}", RunOptions::default());
-        let outcome = trust_filter(
-            &ctx,
-            vec![donor(
-                "acme/undeclared",
-                TrustBasis::DirectDependency,
-                DonorStatus::Undeclared,
-            )],
-        )
-        .unwrap();
-        assert!(outcome.kept.is_empty());
-        assert_eq!(outcome.skipped[0].reason, SkipReason::NotDeclared);
-        assert!(
-            outcome
-                .notes
-                .iter()
-                .any(|n| n.kind == NoteKind::Hint && n.message.contains("--discovery"))
-        );
-    }
-
-    #[test]
-    fn discovery_flag_admits_candidates_and_drops_the_hint() {
-        let (_tmp, ctx) = ctx_with(
-            "{}",
-            RunOptions {
-                discovery: Some(true),
-                ..Default::default()
-            },
-        );
         let outcome = trust_filter(
             &ctx,
             vec![donor(
@@ -693,32 +647,26 @@ mod tests {
     }
 
     #[test]
-    fn manifest_discovery_flag_works_and_cli_overrides() {
-        let refs = |status| {
+    fn undeclared_untrusted_transitive_is_still_skipped_as_untrusted() {
+        // Always-on discovery admits undeclared donors past the declaration
+        // gate, but they must still clear the trust list.
+        let (_tmp, ctx) = ctx_with("{}", RunOptions::default());
+        let outcome = trust_filter(
+            &ctx,
             vec![donor(
-                "acme/undeclared",
-                TrustBasis::DirectDependency,
-                status,
-            )]
-        };
-        let (_tmp, ctx) = ctx_with(r#"{ "discovery": true }"#, RunOptions::default());
-        let outcome = trust_filter(&ctx, refs(DonorStatus::Undeclared)).unwrap();
-        assert_eq!(outcome.kept.len(), 1);
-
-        // CLI override wins over the manifest.
-        let (_tmp, ctx) = ctx_with(
-            r#"{ "discovery": true }"#,
-            RunOptions {
-                discovery: Some(false),
-                ..Default::default()
-            },
-        );
-        let outcome = trust_filter(&ctx, refs(DonorStatus::Undeclared)).unwrap();
+                "evil/undeclared",
+                TrustBasis::Transitive,
+                DonorStatus::Undeclared,
+            )],
+        )
+        .unwrap();
         assert!(outcome.kept.is_empty());
+        assert_eq!(outcome.skipped[0].reason, SkipReason::Untrusted);
+        assert!(outcome.notes.iter().all(|n| n.kind != NoteKind::Hint));
     }
 
     #[test]
-    fn naming_undeclared_package_grants_discovery_for_it_only() {
+    fn positional_filter_still_restricts_undeclared_donors() {
         let (_tmp, ctx) = ctx_with(
             "{}",
             RunOptions {
@@ -742,10 +690,17 @@ mod tests {
             ],
         )
         .unwrap();
+        // Naming trusts + keeps the matched undeclared donor; the unnamed one
+        // is filtered out (no discovery hint anymore).
         assert_eq!(kept_names(&outcome), ["acme/undeclared"]);
         assert!(outcome.kept[0].discovered);
-        // The unnamed candidate still drives the hint.
-        assert!(outcome.notes.iter().any(|n| n.kind == NoteKind::Hint));
+        assert!(outcome.notes.iter().all(|n| n.kind != NoteKind::Hint));
+        assert!(
+            outcome
+                .skipped
+                .iter()
+                .any(|s| s.name.as_str() == "nested/tree" && s.reason == SkipReason::FilteredOut)
+        );
     }
 
     #[test]

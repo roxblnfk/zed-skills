@@ -41,7 +41,6 @@ fn schema_top_level_properties_match_serde_model() {
         "target",
         "aliases",
         "lock-file",
-        "discovery",
         "dependencies",
         "sources",
         "remote",
@@ -58,7 +57,6 @@ fn schema_top_level_properties_match_serde_model() {
         "target": "t/skills",
         "aliases": ["a/skills"],
         "lock-file": "meta/skills.lock",
-        "discovery": true,
         "dependencies": {
             "composer": { "enabled": false, "trusted": ["v/p"], "trusted-replace": true },
             "npm": true,

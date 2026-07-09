@@ -16,17 +16,14 @@ use crate::traits::Cache;
 pub const CACHE_DIR: &str = ".skills-cache";
 
 /// Per-invocation options that shape the run (positional filters, trust
-/// grants, discovery opt-in). Lives in [`Ctx`] so the TrustFilter stage can
-/// consult it.
+/// grants). Lives in [`Ctx`] so the TrustFilter stage can consult it.
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
-    /// Positional `PACKAGE` / `VENDOR/*` arguments: filter + implicit trust
-    /// + per-package discovery grant. Empty = all donors.
+    /// Positional `PACKAGE` / `VENDOR/*` arguments: filter + implicit trust.
+    /// Empty = all donors.
     pub packages: Vec<VendorPattern>,
     /// `--trust=PATTERN` entries, added on top of project + builtin lists.
     pub trust: Vec<VendorPattern>,
-    /// `--discovery` CLI override; `None` defers to the manifest flag.
-    pub discovery: Option<bool>,
     /// A `--from=ID` provider scope is active: donors outside the scope keep
     /// their lockfile entries instead of being pruned.
     pub scoped: bool,
@@ -65,13 +62,6 @@ impl Ctx {
     /// it here (creating parent directories as needed).
     pub fn lock_abs(&self) -> PathBuf {
         self.project_root.join(rel_to_path(&self.lock_rel()))
-    }
-
-    /// Effective discovery flag: CLI override beats the manifest value.
-    pub fn discovery_enabled(&self) -> bool {
-        self.run
-            .discovery
-            .unwrap_or_else(|| self.manifest.discovery.unwrap_or(false))
     }
 
     /// A partial run (positional filters or `--from` scope) never prunes

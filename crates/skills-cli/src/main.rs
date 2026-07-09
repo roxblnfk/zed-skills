@@ -39,8 +39,8 @@ enum Command {
         5  changes pending (--check only)")]
     Update {
         /// Restrict the sync to matching packages (`vendor/package` or
-        /// `vendor/*`). Naming a package implicitly trusts it and enables
-        /// discovery for it.
+        /// `vendor/*`). Naming a package filters to it and implicitly trusts
+        /// it.
         #[arg(value_name = "PACKAGE")]
         packages: Vec<String>,
         /// Run the full pipeline (including conflict detection) without
@@ -76,10 +76,6 @@ enum Command {
         /// lists (repeatable).
         #[arg(long = "trust", value_name = "PATTERN")]
         trust: Vec<String>,
-        /// Include undeclared skills of trusted packages (well-known
-        /// containers + bounded recursive fallback).
-        #[arg(long)]
-        discovery: bool,
     },
     /// List donors and skills with their sync status. Read-only.
     Show {
@@ -94,9 +90,6 @@ enum Command {
         /// Extra trusted vendor pattern (repeatable).
         #[arg(long = "trust", value_name = "PATTERN")]
         trust: Vec<String>,
-        /// Include undeclared skills of trusted packages.
-        #[arg(long)]
-        discovery: bool,
     },
     /// Run the language server over stdio (diagnostics for skills.json and
     /// SKILL.md; editors launch this, not humans).
@@ -210,7 +203,6 @@ async fn main() -> ExitCode {
             refresh,
             re_audit,
             trust,
-            discovery,
         } => {
             commands::update::run(
                 &cwd,
@@ -221,11 +213,7 @@ async fn main() -> ExitCode {
                 from,
                 refresh,
                 re_audit,
-                commands::RawFilters {
-                    packages,
-                    trust,
-                    discovery,
-                },
+                commands::RawFilters { packages, trust },
             )
             .await
         }
@@ -233,19 +221,7 @@ async fn main() -> ExitCode {
             packages,
             from,
             trust,
-            discovery,
-        } => {
-            commands::show::run(
-                &cwd,
-                from,
-                commands::RawFilters {
-                    packages,
-                    trust,
-                    discovery,
-                },
-            )
-            .await
-        }
+        } => commands::show::run(&cwd, from, commands::RawFilters { packages, trust }).await,
         Command::Lsp => commands::lsp::run().await,
         Command::Add {
             input,

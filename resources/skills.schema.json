@@ -30,11 +30,6 @@
             "minLength": 1,
             "default": "skills.lock"
         },
-        "discovery": {
-            "description": "Gates the recursive-fallback skill locator.",
-            "type": "boolean",
-            "default": false
-        },
         "dependencies": {
             "description": "Per-package-manager configuration: how each manager's installed dependency tree becomes a skill donor, plus its per-manager trust list. composer is enabled by default; npm and go are reserved and disabled until their providers land. Each entry is a boolean toggle (true = { enabled: true }) or a configuration object.",
             "type": "object",

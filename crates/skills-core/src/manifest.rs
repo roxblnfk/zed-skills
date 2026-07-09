@@ -43,7 +43,6 @@ pub struct Manifest {
     /// Lockfile location, relative to the project root
     /// (default: `skills.lock`).
     pub lock_file: Option<String>,
-    pub discovery: Option<bool>,
     /// Per-package-manager configuration: how each manager's installed
     /// dependency tree becomes a skill donor, and its per-manager trust list.
     pub dependencies: Option<DependenciesConfig>,
@@ -822,7 +821,6 @@ mod tests {
                 "target": ".agents/skills",
                 "aliases": [".claude/skills", ".cursor/skills"],
                 "lock-file": ".agents/skills.lock",
-                "discovery": false,
                 "dependencies": {
                     "composer": { "enabled": true, "trusted": ["acme/*", "acme/skills"], "trusted-replace": false },
                     "npm": false,
@@ -872,11 +870,19 @@ mod tests {
 
     #[test]
     fn non_bool_flags_rejected() {
-        assert!(err(r#"{ "discovery": "yes" }"#).starts_with("skills.json:"));
         assert!(
             err(r#"{ "dependencies": { "composer": { "trusted-replace": 1 } } }"#)
                 .starts_with("skills.json:")
         );
+    }
+
+    #[test]
+    fn removed_discovery_key_rejected() {
+        // Hard break: discovery is always-on now; the former opt-in key is an
+        // unknown field (mirrors the legacy `local`/`trusted` removals).
+        let e = err(r#"{ "discovery": true }"#);
+        assert!(e.starts_with("skills.json:"), "{e}");
+        assert!(e.contains("unknown field"), "{e}");
     }
 
     #[test]

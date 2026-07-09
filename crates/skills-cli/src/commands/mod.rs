@@ -24,8 +24,6 @@ pub(crate) struct RawFilters {
     pub packages: Vec<String>,
     /// `--trust=PATTERN` values.
     pub trust: Vec<String>,
-    /// `--discovery` flag.
-    pub discovery: bool,
 }
 
 impl RawFilters {
@@ -35,7 +33,6 @@ impl RawFilters {
         Ok(RunOptions {
             packages: parse_patterns(&self.packages, "package argument")?,
             trust: parse_patterns(&self.trust, "--trust value")?,
-            discovery: self.discovery.then_some(true),
             scoped,
             re_audit: false,
         })
@@ -84,12 +81,12 @@ pub(crate) fn providers(from: Option<&str>) -> Result<Vec<Arc<dyn VendorProvider
 }
 
 /// Locator chain: composer-declared source → well-known containers →
-/// recursive fallback (discovery-gated) → explicit root (local dir donors).
-pub(crate) fn locators(discovery: bool) -> Vec<Arc<dyn SkillLocator>> {
+/// recursive fallback → explicit root (local dir donors).
+pub(crate) fn locators() -> Vec<Arc<dyn SkillLocator>> {
     vec![
         Arc::new(ComposerDeclaredLocator),
         Arc::new(WellKnownLocator),
-        Arc::new(RecursiveFallbackLocator::new(discovery)),
+        Arc::new(RecursiveFallbackLocator::new()),
         Arc::new(DeclaredLocator),
     ]
 }

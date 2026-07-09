@@ -4,7 +4,7 @@
 //! ([`github::GithubProvider`], [`gitlab::GitlabProvider`],
 //! [`url::UrlProvider`]) with a project-local archive cache; M3 adds the
 //! composer local provider ([`composer::ComposerProvider`]) and completes
-//! the locator chain with the discovery-gated
+//! the locator chain with the always-on
 //! [`locate::RecursiveFallbackLocator`].
 
 pub mod addparse;

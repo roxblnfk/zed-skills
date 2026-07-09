@@ -156,8 +156,8 @@ pub enum DonorStatus {
     /// Declares its skills source (a manifest entry, or composer
     /// `extra.skills.source`).
     Declared,
-    /// No declaration — a discovery candidate. Included only when discovery
-    /// is enabled (globally or per-package via a positional argument).
+    /// No declaration — its skills are located by the always-on well-known /
+    /// recursive fallback. Still subject to the trust list.
     Undeclared,
     /// Declares a source that failed validation. Dropped from the run with
     /// a warning; never blocks other donors.

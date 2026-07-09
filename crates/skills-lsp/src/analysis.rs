@@ -57,7 +57,7 @@ pub mod codes {
     pub const DISCOVER: &str = "discover";
     /// Vendor-level materialize/scan problem.
     pub const VENDOR: &str = "vendor";
-    /// Pipeline note (malformed donor, discovery hint, …).
+    /// Pipeline note (malformed donor, trust hint, …).
     pub const NOTE: &str = "note";
     /// skills.lock could not be read/parsed.
     pub const LOCKFILE: &str = "lockfile";
@@ -341,7 +341,7 @@ async fn dry_pipeline(
     }
 
     // Locate + Scan, per vendor so one broken donor doesn't hide the rest.
-    let locators = locator_chain(ctx.discovery_enabled());
+    let locators = locator_chain();
     let mut scanned: Vec<ScannedSkill> = Vec::new();
     for vendor in &vendors {
         match scan::scan_vendor(vendor.clone(), locators.clone()).await {
@@ -478,11 +478,11 @@ async fn dry_pipeline(
 }
 
 /// The full locator chain, mirroring the CLI wiring.
-pub fn locator_chain(discovery: bool) -> Vec<Arc<dyn SkillLocator>> {
+pub fn locator_chain() -> Vec<Arc<dyn SkillLocator>> {
     vec![
         Arc::new(skills_providers::ComposerDeclaredLocator),
         Arc::new(skills_providers::WellKnownLocator),
-        Arc::new(skills_providers::RecursiveFallbackLocator::new(discovery)),
+        Arc::new(skills_providers::RecursiveFallbackLocator::new()),
         Arc::new(skills_providers::DeclaredLocator),
     ]
 }

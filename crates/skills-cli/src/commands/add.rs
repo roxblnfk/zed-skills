@@ -202,7 +202,7 @@ async fn materialize_and_scan(cwd: &Path, vendor: &Arc<dyn Vendor>) -> Result<us
         .materialize(&cache)
         .await
         .map_err(|e| e.to_string())?;
-    let scanned = scan_vendor(materialized, super::locators(false))
+    let scanned = scan_vendor(materialized, super::locators())
         .await
         .map_err(|e| e.to_string())?;
     Ok(scanned.len())
@@ -222,7 +222,6 @@ async fn sync_after_add(cwd: &Path) -> Result<(), CliError> {
         super::RawFilters {
             packages: Vec::new(),
             trust: Vec::new(),
-            discovery: false,
         },
     )
     .await
