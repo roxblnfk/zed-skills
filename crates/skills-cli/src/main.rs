@@ -61,7 +61,8 @@ enum Command {
         /// project `aliases` entirely (no merge).
         #[arg(long = "alias", value_name = "PATH")]
         alias: Vec<String>,
-        /// Only run the named provider (dir, composer, github, gitlab, url).
+        /// Only run the named provider (dir, composer, npm, github, gitlab,
+        /// url).
         #[arg(long, value_name = "ID")]
         from: Option<String>,
         /// Delete matching cache entries and re-download remote archives
@@ -83,7 +84,7 @@ enum Command {
         /// filtered-out.
         #[arg(value_name = "PACKAGE")]
         packages: Vec<String>,
-        /// Only show donors of the named provider (dir, composer, github,
+        /// Only show donors of the named provider (dir, composer, npm, github,
         /// gitlab, url).
         #[arg(long, value_name = "ID")]
         from: Option<String>,

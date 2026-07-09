@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use skills_core::traits::VendorProvider;
 use skills_providers::http::{HttpClient, HttpError, HttpResponse};
 use skills_providers::{
-    ComposerProvider, DirProvider, GithubProvider, GitlabProvider, UrlProvider,
+    ComposerProvider, DirProvider, GithubProvider, GitlabProvider, NpmProvider, UrlProvider,
 };
 
 /// HTTP client that refuses every request.
@@ -38,6 +38,7 @@ pub fn offline_providers() -> Vec<Arc<dyn VendorProvider>> {
     vec![
         Arc::new(DirProvider),
         Arc::new(ComposerProvider),
+        Arc::new(NpmProvider),
         Arc::new(GithubProvider::new(Arc::clone(&http), None)),
         Arc::new(GitlabProvider::new(Arc::clone(&http), None)),
         Arc::new(UrlProvider::new(http)),

@@ -605,8 +605,9 @@ fn from_matches(from: &str, provider: ProviderId) -> bool {
         ProviderId::Github => from == "github",
         ProviderId::Gitlab => from == "gitlab",
         ProviderId::Url => from == "http" || from == "zip",
-        // Dir donors are matched by origin path in `source_index_for`.
-        ProviderId::Dir | ProviderId::Composer => false,
+        // Dir donors are matched by origin path in `source_index_for`; npm
+        // donors are discovery-only and never carry a `sources[]` entry.
+        ProviderId::Dir | ProviderId::Composer | ProviderId::Npm => false,
     }
 }
 

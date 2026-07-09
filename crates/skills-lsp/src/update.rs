@@ -10,7 +10,7 @@ use skills_core::pipeline::{SyncAction, SyncReport, run_update};
 use skills_core::traits::VendorProvider;
 use skills_providers::http::{HttpClient, ReqwestClient};
 use skills_providers::{
-    ComposerProvider, DirProvider, GithubProvider, GitlabProvider, UrlProvider,
+    ComposerProvider, DirProvider, GithubProvider, GitlabProvider, NpmProvider, UrlProvider,
 };
 
 use crate::analysis::locator_chain;
@@ -25,6 +25,7 @@ pub async fn run_real_update(project_root: &Path) -> Result<SyncReport, String> 
     let providers: Vec<Arc<dyn VendorProvider>> = vec![
         Arc::new(DirProvider),
         Arc::new(ComposerProvider),
+        Arc::new(NpmProvider),
         Arc::new(GithubProvider::from_env(Arc::clone(&http))),
         Arc::new(GitlabProvider::from_env(Arc::clone(&http))),
         Arc::new(UrlProvider::new(http)),

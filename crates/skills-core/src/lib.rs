@@ -33,7 +33,7 @@ pub use manifest::{
     OnFail, StaticStep,
 };
 pub use naming::{conflict_key, dir_name_danger};
-pub use pattern::VendorPattern;
+pub use pattern::{NpmPattern, TrustPattern, VendorPattern, trust_matches_any};
 pub use pipeline::ChainEntry;
 pub use pipeline::ctx::{Ctx, PrepareOptions};
 pub use traits::{Auditor, Cache, Located, SkillLocator, Vendor, VendorProvider};

@@ -13,7 +13,7 @@ use skills_core::traits::{SkillLocator, VendorProvider};
 use skills_providers::http::{HttpClient, ReqwestClient};
 use skills_providers::{
     ComposerDeclaredLocator, ComposerProvider, DeclaredLocator, DirProvider, GithubProvider,
-    GitlabProvider, RecursiveFallbackLocator, UrlProvider, WellKnownLocator,
+    GitlabProvider, NpmProvider, RecursiveFallbackLocator, UrlProvider, WellKnownLocator,
 };
 
 use crate::CliError;
@@ -61,6 +61,7 @@ pub(crate) fn providers(from: Option<&str>) -> Result<Vec<Arc<dyn VendorProvider
     let all: Vec<Arc<dyn VendorProvider>> = vec![
         Arc::new(DirProvider),
         Arc::new(ComposerProvider),
+        Arc::new(NpmProvider),
         Arc::new(GithubProvider::from_env(Arc::clone(&http))),
         Arc::new(GitlabProvider::from_env(Arc::clone(&http))),
         Arc::new(UrlProvider::new(http)),
@@ -74,7 +75,7 @@ pub(crate) fn providers(from: Option<&str>) -> Result<Vec<Arc<dyn VendorProvider
         .collect();
     if filtered.is_empty() {
         return Err(CliError::config(format!(
-            "unknown --from value '{from}' (expected one of: dir, composer, github, gitlab, url)"
+            "unknown --from value '{from}' (expected one of: dir, composer, npm, github, gitlab, url)"
         )));
     }
     Ok(filtered)

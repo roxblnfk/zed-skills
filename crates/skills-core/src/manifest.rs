@@ -421,17 +421,67 @@ impl Manifest {
         self.sources.is_none() && self.remote.is_some()
     }
 
+    /// A package manager's dependency entry, if configured.
+    fn manager_entry(&self, manager: &str) -> Option<&DependencyEntry> {
+        let deps = self.dependencies.as_ref()?;
+        match manager {
+            "composer" => deps.composer.as_ref(),
+            "npm" => deps.npm.as_ref(),
+            "go" => deps.go.as_ref(),
+            _ => None,
+        }
+    }
+
     /// The `composer` manager entry, if configured.
     fn composer_entry(&self) -> Option<&DependencyEntry> {
-        self.dependencies.as_ref().and_then(|d| d.composer.as_ref())
+        self.manager_entry("composer")
+    }
+
+    /// Parsed `trusted` patterns for a package manager, under that manager's
+    /// grammar (composer → [`VendorPattern`], npm → [`NpmPattern`]). Managers
+    /// without a trust grammar (`go`) and unknown ids yield no patterns.
+    /// Validation already rejected malformed entries, so unparseable leftovers
+    /// are ignored.
+    pub fn trusted_patterns_for(&self, manager: &str) -> Vec<crate::pattern::TrustPattern> {
+        self.manager_entry(manager)
+            .and_then(DependencyEntry::config)
+            .and_then(|c| c.trusted.as_ref())
+            .into_iter()
+            .flatten()
+            .filter_map(|p| crate::pattern::TrustPattern::parse(manager, p).and_then(Result::ok))
+            .collect()
+    }
+
+    /// A package manager's `trusted-replace` flag (default: false). When set,
+    /// the project `trusted` list replaces the built-in list and
+    /// direct-dependency trust for that manager.
+    pub fn trusted_replace_for(&self, manager: &str) -> bool {
+        self.manager_entry(manager)
+            .and_then(DependencyEntry::config)
+            .and_then(|c| c.trusted_replace)
+            .unwrap_or(false)
+    }
+
+    /// Whether a package manager's dependency tree is walked for donors,
+    /// resolved from `dependencies.<manager>` with the caller-supplied
+    /// per-manager default.
+    pub fn manager_enabled(&self, manager: &str, default: bool) -> bool {
+        self.manager_entry(manager)
+            .map(|e| e.is_enabled(default))
+            .unwrap_or(default)
     }
 
     /// Whether the composer dependency tree is walked for donors. Resolved
     /// from `dependencies.composer` (default: enabled).
     pub fn composer_enabled(&self) -> bool {
-        self.composer_entry()
-            .map(|e| e.is_enabled(true))
-            .unwrap_or(true)
+        self.manager_enabled("composer", true)
+    }
+
+    /// Whether the npm dependency tree is walked for donors. Resolved from
+    /// `dependencies.npm` (default: disabled until the npm provider is the
+    /// project's chosen manager).
+    pub fn npm_enabled(&self) -> bool {
+        self.manager_enabled("npm", false)
     }
 
     /// Parsed composer `trusted` patterns from `dependencies.composer`'s
@@ -450,12 +500,10 @@ impl Manifest {
 
     /// The composer entry's `trusted-replace` flag (default: false). When set,
     /// the project `trusted` list replaces the built-in list and
-    /// direct-dependency trust.
+    /// direct-dependency trust. Composer-specialized wrapper over
+    /// [`Manifest::trusted_replace_for`].
     pub fn trusted_replace(&self) -> bool {
-        self.composer_entry()
-            .and_then(DependencyEntry::config)
-            .and_then(|c| c.trusted_replace)
-            .unwrap_or(false)
+        self.trusted_replace_for("composer")
     }
 
     fn validate(&self) -> Result<(), ManifestError> {
@@ -533,12 +581,12 @@ impl Manifest {
             }
         }
 
-        // dependencies: per-manager trust lists. composer uses the
-        // `VendorPattern` grammar; npm/go are structural-only for now (their
-        // grammars arrive with the providers).
+        // dependencies: per-manager trust lists. composer and npm use their
+        // own pattern grammars; go stays structural-only for now (its grammar
+        // arrives with the provider).
         if let Some(deps) = &self.dependencies {
-            validate_composer_trusted(deps.composer.as_ref(), &mut issues);
-            validate_structural_trusted(deps.npm.as_ref(), "npm", &mut issues);
+            validate_grammar_trusted(deps.composer.as_ref(), "composer", &mut issues);
+            validate_grammar_trusted(deps.npm.as_ref(), "npm", &mut issues);
             validate_structural_trusted(deps.go.as_ref(), "go", &mut issues);
         }
 
@@ -639,28 +687,36 @@ fn paths_overlap(a: &str, b: &str) -> bool {
     sa[..n] == sb[..n]
 }
 
-/// Validate the composer manager's `trusted` list against the `VendorPattern`
-/// grammar (exact `vendor/pkg` or `vendor/*`). A bare toggle / absent entry
-/// has nothing to validate.
-fn validate_composer_trusted(entry: Option<&DependencyEntry>, issues: &mut Vec<ManifestIssue>) {
+/// Validate a manager's `trusted` list against that manager's pattern grammar
+/// (composer → `vendor/pkg` / `vendor/*`; npm → `package` / `@scope/pkg` /
+/// `@scope/*`). A bare toggle / absent entry has nothing to validate.
+fn validate_grammar_trusted(
+    entry: Option<&DependencyEntry>,
+    manager: &str,
+    issues: &mut Vec<ManifestIssue>,
+) {
     let Some(cfg) = entry.and_then(DependencyEntry::config) else {
         return;
     };
     let Some(trusted) = &cfg.trusted else {
         return;
     };
+    let shapes = match manager {
+        "composer" => "'vendor/package' or 'vendor/*'",
+        "npm" => "'package', '@scope/package' or '@scope/*'",
+        _ => "a valid pattern",
+    };
     for (idx, pattern) in trusted.iter().enumerate() {
-        if crate::pattern::VendorPattern::parse(pattern).is_err() {
+        let parsed = crate::pattern::TrustPattern::parse(manager, pattern);
+        if !matches!(parsed, Some(Ok(_))) {
             issues.push(ManifestIssue::new(
                 vec![
                     PathSeg::key("dependencies"),
-                    PathSeg::key("composer"),
+                    PathSeg::key(manager),
                     PathSeg::key("trusted"),
                     PathSeg::Index(idx),
                 ],
-                format!(
-                    "invalid trusted pattern '{pattern}': expected 'vendor/package' or 'vendor/*'"
-                ),
+                format!("invalid trusted pattern '{pattern}': expected {shapes}"),
             ));
         }
     }
@@ -1055,10 +1111,19 @@ mod tests {
         // not implicitly enable the manager.
         let m =
             Manifest::parse(r#"{ "dependencies": { "npm": { "trusted": ["lodash"] } } }"#).unwrap();
-        // No public npm accessor yet; the parsed model must carry the entry
-        // with `enabled` absent (folds to the per-manager default downstream).
-        let npm = m.dependencies.unwrap().npm.unwrap();
-        assert_eq!(npm.config().unwrap().enabled, None);
+        assert!(!m.npm_enabled());
+        // Absent block / absent entry also stays disabled; explicit forms enable.
+        assert!(!Manifest::parse("{}").unwrap().npm_enabled());
+        assert!(
+            Manifest::parse(r#"{ "dependencies": { "npm": true } }"#)
+                .unwrap()
+                .npm_enabled()
+        );
+        assert!(
+            Manifest::parse(r#"{ "dependencies": { "npm": { "enabled": true } } }"#)
+                .unwrap()
+                .npm_enabled()
+        );
     }
 
     #[test]
@@ -1087,26 +1152,75 @@ mod tests {
         assert!(!m.trusted_replace());
     }
 
+    #[test]
+    fn trusted_patterns_for_parses_per_manager_grammar() {
+        let m = Manifest::parse(
+            r#"{ "dependencies": {
+                "composer": { "trusted": ["acme/*"] },
+                "npm": { "trusted": ["lodash", "@scope/*"], "trusted-replace": true }
+            } }"#,
+        )
+        .unwrap();
+
+        let composer_pats = m.trusted_patterns_for("composer");
+        let composer: Vec<&str> = composer_pats.iter().map(|p| p.as_str()).collect();
+        assert_eq!(composer, ["acme/*"]);
+        assert!(!m.trusted_replace_for("composer"));
+
+        let npm_pats = m.trusted_patterns_for("npm");
+        let npm: Vec<&str> = npm_pats.iter().map(|p| p.as_str()).collect();
+        assert_eq!(npm, ["lodash", "@scope/*"]);
+        assert!(m.trusted_replace_for("npm"));
+
+        // go has no grammar, unknown managers yield nothing.
+        assert!(m.trusted_patterns_for("go").is_empty());
+        assert!(m.trusted_patterns_for("cargo").is_empty());
+        assert!(!m.trusted_replace_for("go"));
+    }
+
     // --- per-manager grammar enforcement ------------------------------------
 
     #[test]
-    fn npm_go_trusted_are_structural_only() {
-        // A string rejected by the composer grammar is fine under npm/go
-        // (their grammars arrive with the providers).
+    fn go_trusted_is_structural_only() {
+        // Go has no pattern grammar yet: a string rejected by the composer
+        // grammar is fine under go (its grammar arrives with the provider).
         assert!(
             err(r#"{ "dependencies": { "composer": { "trusted": ["lodash"] } } }"#)
                 .contains("invalid trusted pattern")
         );
-        Manifest::parse(r#"{ "dependencies": { "npm": { "trusted": ["lodash", "@scope/*"] } } }"#)
-            .unwrap();
         Manifest::parse(r#"{ "dependencies": { "go": { "trusted": ["github.com/owner/*"] } } }"#)
             .unwrap();
     }
 
     #[test]
-    fn npm_empty_trusted_entry_rejected() {
+    fn npm_trusted_grammar_enforced() {
+        // Accepted npm shapes: bare, scoped exact, scope wildcard.
+        Manifest::parse(
+            r#"{ "dependencies": { "npm": { "trusted": ["lodash", "@scope/pkg", "@scope/*"] } } }"#,
+        )
+        .unwrap();
+        // Rejected: unscoped-with-slash, bare wildcard, scope without '/',
+        // multi-slash.
+        for bad in ["pkg/sub", "*", "@scope", "a/b/c"] {
+            let json = format!(r#"{{ "dependencies": {{ "npm": {{ "trusted": ["{bad}"] }} }} }}"#);
+            let e = err(&json);
+            assert!(e.contains("invalid trusted pattern"), "{bad}: {e}");
+            assert!(
+                e.contains("'package', '@scope/package' or '@scope/*'"),
+                "{bad}: {e}"
+            );
+        }
+        // A composer-shaped pattern is not a valid npm pattern.
+        assert!(
+            err(r#"{ "dependencies": { "npm": { "trusted": ["vendor/pkg"] } } }"#)
+                .contains("invalid trusted pattern")
+        );
+    }
+
+    #[test]
+    fn npm_blank_trusted_entry_rejected() {
         let e = err(r#"{ "dependencies": { "npm": { "trusted": ["  "] } } }"#);
-        assert!(e.contains("must not be empty"), "{e}");
+        assert!(e.contains("invalid trusted pattern"), "{e}");
     }
 
     #[test]

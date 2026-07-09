@@ -7,17 +7,21 @@
 //!    `[warn]` note — one bad vendor never blocks the rest.
 //! 2. Positional filters (`skills update acme/foo` / `acme/*`) restrict the
 //!    run to matching donors; naming a donor is an implicit trust grant.
-//! 3. Everything else must clear the effective trust list:
-//!    `dependencies.composer.trusted-replace: true` ? (project ∪ --trust) :
-//!    (builtin ∪ project ∪ --trust). User-declared donors (`sources[]`, incl.
-//!    `dir` entries) and direct
-//!    dependencies (unless `trusted-replace`) bypass the list. Untrusted
-//!    transitive donors are silently skipped and surfaced in the trailing
-//!    `[skip]` block.
+//! 3. Everything else must clear the effective trust list of its *own* package
+//!    manager (composer / npm): `dependencies.<mgr>.trusted-replace: true` ?
+//!    project : (builtin ∪ project), with the composer `--trust` CLI list also
+//!    applied to composer donors. A donor is only ever matched against its own
+//!    manager's lists, so composer and npm never cross-approve. User-declared
+//!    donors (`sources[]`, incl. `dir` entries) have no trust manager and are
+//!    approved outright; direct dependencies bypass the list unless their
+//!    manager sets `trusted-replace`. Untrusted transitive donors are silently
+//!    skipped and surfaced in the trailing `[skip]` block.
+
+use std::collections::HashMap;
 
 use crate::domain::{DonorStatus, Note, TrustBasis, VendorName, VendorRef};
 use crate::error::TrustError;
-use crate::pattern::{VendorPattern, matches_any};
+use crate::pattern::{TrustPattern, VendorPattern, matches_any, trust_matches_any};
 use crate::pipeline::ctx::Ctx;
 
 /// Built-in trusted-vendors list for the composer provider, embedded from
@@ -87,6 +91,24 @@ pub fn builtin_trusted_raw(manager: &str) -> Vec<&'static str> {
     trust_lines(raw).collect()
 }
 
+/// Parse the built-in list of `manager` under its trust grammar. Only the
+/// managers with a live grammar (`composer`, `npm`) are parsed; anything else
+/// (including `go`, whose entries are module-path prefixes with no grammar
+/// yet) yields no patterns. The embedded resources are asserted valid.
+fn builtin_trust_patterns(manager: &str) -> Vec<TrustPattern> {
+    if !matches!(manager, "composer" | "npm") {
+        return Vec::new();
+    }
+    builtin_trusted_raw(manager)
+        .into_iter()
+        .map(|line| {
+            TrustPattern::parse(manager, line)
+                .expect("known manager")
+                .unwrap_or_else(|e| panic!("resources/trusted-{manager}.txt: {e}"))
+        })
+        .collect()
+}
+
 /// Which trust list approved a kept donor — used by `skills show` for the
 /// `[builtin]` / `[direct-dep]` annotations. Priority: project → cli →
 /// builtin → direct-dep (the most explicit source takes credit).
@@ -144,19 +166,44 @@ impl TrustOutcome {
     }
 }
 
+/// The effective trust context for one package manager, computed on demand and
+/// memoized per `trust_filter` call. `builtin` is empty when `replace` is set
+/// (the project list replaces both the built-in list and direct-dependency
+/// trust for that manager).
+struct TrustCtx {
+    project: Vec<TrustPattern>,
+    builtin: Vec<TrustPattern>,
+    replace: bool,
+}
+
+impl TrustCtx {
+    fn build(ctx: &Ctx, manager: &str) -> TrustCtx {
+        let replace = ctx.manifest.trusted_replace_for(manager);
+        TrustCtx {
+            project: ctx.manifest.trusted_patterns_for(manager),
+            builtin: if replace {
+                Vec::new()
+            } else {
+                builtin_trust_patterns(manager)
+            },
+            replace,
+        }
+    }
+}
+
 pub fn trust_filter(ctx: &Ctx, vendors: Vec<VendorRef>) -> Result<TrustOutcome, TrustError> {
     let filters = &ctx.run.packages;
+    // The `--trust` CLI list is composer-grammar and applies to composer donors
+    // only; npm bare/scoped names cannot be expressed by it anyway.
     let cli = &ctx.run.trust;
-    let replace = ctx.manifest.trusted_replace();
-    let project = ctx.manifest.trusted_patterns();
-    let builtin = if replace {
-        Vec::new()
-    } else {
-        builtin_trusted()
-    };
+
+    // Per-manager trust context, memoized: composer and npm are the only
+    // manager-scoped providers, so this cache holds at most two entries.
+    let mut ctx_cache: HashMap<&'static str, TrustCtx> = HashMap::new();
 
     let mut outcome = TrustOutcome::default();
-    let mut untrusted: Vec<VendorName> = Vec::new();
+    // Untrusted donors, with the manager whose list they failed (for the note).
+    let mut untrusted: Vec<(VendorName, Option<&'static str>)> = Vec::new();
 
     for donor in vendors {
         let name = donor.name.clone();
@@ -186,19 +233,46 @@ pub fn trust_filter(ctx: &Ctx, vendors: Vec<VendorRef>) -> Result<TrustOutcome, 
             continue;
         }
 
-        // 3. Trust. Positional naming is an implicit grant.
+        // 3. Trust. A donor is matched only against its own manager's lists.
+        // `sources[]` donors (`dir`/`github`/`gitlab`/`url`) have no trust
+        // manager: they are `UserDeclared` and approved before any list check.
+        let manager = donor.provider.trust_manager();
+        let tctx = manager.map(|m| {
+            &*ctx_cache
+                .entry(m)
+                .or_insert_with(|| TrustCtx::build(ctx, m))
+        });
+
+        // Whether the donor matches any effective trust list of its manager
+        // (project → cli → builtin). Under `trusted-replace` the builtin list
+        // is empty, so only the project (and composer `--trust`) list applies.
+        let on_trust_list = |t: &TrustCtx| {
+            trust_matches_any(&t.project, name.as_str())
+                || (manager == Some("composer") && matches_any(cli, name.as_str()))
+                || trust_matches_any(&t.builtin, name.as_str())
+        };
+
+        // Positional naming is an implicit grant.
         let approved = named
             || match donor.trust {
                 TrustBasis::UserDeclared => true,
-                TrustBasis::DirectDependency if !replace => true,
-                _ => {
-                    matches_any(&project, name.as_str())
-                        || matches_any(cli, name.as_str())
-                        || matches_any(&builtin, name.as_str())
-                }
+                TrustBasis::DirectDependency => match tctx {
+                    // Direct-dep trust applies unless `trusted-replace` drops
+                    // it — but a direct dep explicitly on the project list is
+                    // still trusted (the list is the sole authority under
+                    // replace).
+                    Some(t) => !t.replace || on_trust_list(t),
+                    // Not manager-scoped: direct-dep trust always applies.
+                    None => true,
+                },
+                TrustBasis::Transitive => match tctx {
+                    Some(t) => on_trust_list(t),
+                    // A transitive donor with no manager cannot be on any list.
+                    None => false,
+                },
             };
         if !approved {
-            untrusted.push(name.clone());
+            untrusted.push((name.clone(), manager));
             outcome.skipped.push(SkippedDonor {
                 name,
                 reason: SkipReason::Untrusted,
@@ -206,7 +280,7 @@ pub fn trust_filter(ctx: &Ctx, vendors: Vec<VendorRef>) -> Result<TrustOutcome, 
             continue;
         }
 
-        let trust_source = attribute(&donor, &project, cli, &builtin, replace);
+        let trust_source = attribute(&donor, manager, tctx, cli);
         outcome.kept.push(KeptDonor {
             discovered: donor.status == DonorStatus::Undeclared,
             trust_source,
@@ -225,32 +299,44 @@ pub fn trust_filter(ctx: &Ctx, vendors: Vec<VendorRef>) -> Result<TrustOutcome, 
         });
     }
 
-    for name in untrusted {
-        outcome.notes.push(Note::skip(format!(
-            "{name}: untrusted package not synced (add it to \
-             \"dependencies.composer.trusted\" in skills.json or rerun with --trust={name})"
-        )));
+    for (name, manager) in untrusted {
+        // Composer (and any non-manager edge case) keeps the historical wording
+        // including the `--trust` hint; npm has no CLI trust expression.
+        let note = if manager == Some("npm") {
+            format!(
+                "{name}: untrusted package not synced (add it to \
+                 \"dependencies.npm.trusted\" in skills.json)"
+            )
+        } else {
+            format!(
+                "{name}: untrusted package not synced (add it to \
+                 \"dependencies.composer.trusted\" in skills.json or rerun with --trust={name})"
+            )
+        };
+        outcome.notes.push(Note::skip(note));
     }
 
     Ok(outcome)
 }
 
-/// Which list gets credit for trusting a kept donor.
+/// Which list gets credit for trusting a kept donor, using the donor's own
+/// manager lists. Priority: project → cli → builtin → direct-dep. Donors with
+/// no trust manager (user-declared `sources[]`) get no chip.
 fn attribute(
     donor: &VendorRef,
-    project: &[VendorPattern],
+    manager: Option<&str>,
+    tctx: Option<&TrustCtx>,
     cli: &[VendorPattern],
-    builtin: &[VendorPattern],
-    replace: bool,
 ) -> Option<TrustSource> {
     let name = donor.name.as_str();
-    if matches_any(project, name) {
+    let t = tctx?;
+    if trust_matches_any(&t.project, name) {
         Some(TrustSource::Project)
-    } else if matches_any(cli, name) {
+    } else if manager == Some("composer") && matches_any(cli, name) {
         Some(TrustSource::Cli)
-    } else if !replace && matches_any(builtin, name) {
+    } else if !t.replace && trust_matches_any(&t.builtin, name) {
         Some(TrustSource::Builtin)
-    } else if !replace && donor.trust == TrustBasis::DirectDependency {
+    } else if !t.replace && donor.trust == TrustBasis::DirectDependency {
         Some(TrustSource::DirectDep)
     } else {
         None
@@ -294,12 +380,17 @@ mod tests {
         }
     }
 
-    fn donor(name: &str, trust: TrustBasis, status: DonorStatus) -> VendorRef {
+    fn donor_with(
+        provider: ProviderId,
+        name: &str,
+        trust: TrustBasis,
+        status: DonorStatus,
+    ) -> VendorRef {
         let origin = Origin::Local {
             path: format!("vendor/{name}"),
         };
         VendorRef {
-            provider: ProviderId::Composer,
+            provider,
             name: VendorName::new(name),
             origin: origin.clone(),
             filter: SkillsFilter::All,
@@ -310,6 +401,14 @@ mod tests {
                 origin,
             }),
         }
+    }
+
+    fn donor(name: &str, trust: TrustBasis, status: DonorStatus) -> VendorRef {
+        donor_with(ProviderId::Composer, name, trust, status)
+    }
+
+    fn npm_donor(name: &str, trust: TrustBasis, status: DonorStatus) -> VendorRef {
+        donor_with(ProviderId::Npm, name, trust, status)
     }
 
     fn ctx_with(manifest: &str, run: RunOptions) -> (tempfile::TempDir, Ctx) {
@@ -735,5 +834,202 @@ mod tests {
             &outcome.skipped[0].reason,
             SkipReason::Malformed(reason) if reason.contains("escape")
         ));
+    }
+
+    // --- npm per-manager trust ----------------------------------------------
+
+    #[test]
+    fn npm_project_list_approves_scoped_and_bare() {
+        let (_tmp, ctx) = ctx_with(
+            r#"{ "dependencies": { "npm": { "trusted": ["@myorg/*", "lodash"] } } }"#,
+            RunOptions::default(),
+        );
+        let outcome = trust_filter(
+            &ctx,
+            vec![
+                npm_donor(
+                    "@myorg/thing",
+                    TrustBasis::Transitive,
+                    DonorStatus::Declared,
+                ),
+                npm_donor("lodash", TrustBasis::Transitive, DonorStatus::Declared),
+                npm_donor("react", TrustBasis::Transitive, DonorStatus::Declared),
+            ],
+        )
+        .unwrap();
+        assert_eq!(kept_names(&outcome), ["@myorg/thing", "lodash"]);
+        assert_eq!(outcome.kept[0].trust_source, Some(TrustSource::Project));
+        assert_eq!(outcome.kept[1].trust_source, Some(TrustSource::Project));
+        // The untrusted npm donor gets an npm-worded note (no --trust hint).
+        assert!(outcome.notes.iter().any(|n| n.kind == NoteKind::Skip
+            && n.message.contains("react")
+            && n.message.contains("dependencies.npm.trusted")
+            && !n.message.contains("--trust")));
+    }
+
+    #[test]
+    fn npm_builtin_list_approves_transitive() {
+        let (_tmp, ctx) = ctx_with("{}", RunOptions::default());
+        let outcome = trust_filter(
+            &ctx,
+            vec![npm_donor(
+                "@anthropic-ai/sdk",
+                TrustBasis::Transitive,
+                DonorStatus::Declared,
+            )],
+        )
+        .unwrap();
+        assert_eq!(kept_names(&outcome), ["@anthropic-ai/sdk"]);
+        assert_eq!(outcome.kept[0].trust_source, Some(TrustSource::Builtin));
+    }
+
+    #[test]
+    fn npm_untrusted_transitive_is_skipped() {
+        let (_tmp, ctx) = ctx_with("{}", RunOptions::default());
+        let outcome = trust_filter(
+            &ctx,
+            vec![npm_donor(
+                "@evil/payload",
+                TrustBasis::Transitive,
+                DonorStatus::Declared,
+            )],
+        )
+        .unwrap();
+        assert!(outcome.kept.is_empty());
+        assert_eq!(outcome.skipped[0].reason, SkipReason::Untrusted);
+    }
+
+    #[test]
+    fn npm_trusted_replace_drops_builtin() {
+        let (_tmp, ctx) = ctx_with(
+            r#"{ "dependencies": { "npm": { "trusted": ["@myorg/*"], "trusted-replace": true } } }"#,
+            RunOptions::default(),
+        );
+        let outcome = trust_filter(
+            &ctx,
+            vec![
+                npm_donor(
+                    "@anthropic-ai/sdk",
+                    TrustBasis::Transitive,
+                    DonorStatus::Declared,
+                ),
+                npm_donor(
+                    "@myorg/thing",
+                    TrustBasis::Transitive,
+                    DonorStatus::Declared,
+                ),
+            ],
+        )
+        .unwrap();
+        assert_eq!(kept_names(&outcome), ["@myorg/thing"]);
+        assert_eq!(outcome.kept[0].trust_source, Some(TrustSource::Project));
+    }
+
+    #[test]
+    fn npm_direct_dependency_trusted_without_list() {
+        let (_tmp, ctx) = ctx_with("{}", RunOptions::default());
+        let outcome = trust_filter(
+            &ctx,
+            vec![npm_donor(
+                "@myorg/direct",
+                TrustBasis::DirectDependency,
+                DonorStatus::Declared,
+            )],
+        )
+        .unwrap();
+        assert_eq!(kept_names(&outcome), ["@myorg/direct"]);
+        assert_eq!(outcome.kept[0].trust_source, Some(TrustSource::DirectDep));
+    }
+
+    #[test]
+    fn npm_direct_dependency_dropped_when_npm_replace() {
+        let (_tmp, ctx) = ctx_with(
+            r#"{ "dependencies": { "npm": { "trusted-replace": true } } }"#,
+            RunOptions::default(),
+        );
+        let outcome = trust_filter(
+            &ctx,
+            vec![npm_donor(
+                "@myorg/direct",
+                TrustBasis::DirectDependency,
+                DonorStatus::Declared,
+            )],
+        )
+        .unwrap();
+        assert!(outcome.kept.is_empty());
+        assert_eq!(outcome.skipped[0].reason, SkipReason::Untrusted);
+    }
+
+    #[test]
+    fn composer_and_npm_lists_do_not_cross_approve() {
+        // A composer project pattern shaped like a scoped npm name must not
+        // approve an npm donor; an npm scope-wildcard must not approve a
+        // composer donor. Each donor is matched only against its own manager.
+        let (_tmp, ctx) = ctx_with(
+            r#"{ "dependencies": {
+                "composer": { "trusted": ["@scope/thing"] },
+                "npm": { "trusted": ["@scope/*"] }
+            } }"#,
+            RunOptions::default(),
+        );
+        let outcome = trust_filter(
+            &ctx,
+            vec![
+                // npm donor: only the npm list can approve it.
+                npm_donor(
+                    "@scope/thing",
+                    TrustBasis::Transitive,
+                    DonorStatus::Declared,
+                ),
+                // composer donor named like an npm scope pattern: the npm
+                // `@scope/*` must NOT approve it; the composer `@scope/thing`
+                // (parsed as vendor `@scope`, package `thing`) does.
+                donor(
+                    "@scope/thing",
+                    TrustBasis::Transitive,
+                    DonorStatus::Declared,
+                ),
+                // composer donor the npm list would match if it crossed over.
+                donor(
+                    "@scope/other",
+                    TrustBasis::Transitive,
+                    DonorStatus::Declared,
+                ),
+            ],
+        )
+        .unwrap();
+        // First two kept (npm by npm list, composer by composer exact); the
+        // third composer donor is not approved by npm's `@scope/*`.
+        assert_eq!(kept_names(&outcome), ["@scope/thing", "@scope/thing"]);
+        assert!(
+            outcome
+                .skipped
+                .iter()
+                .any(|s| s.name.as_str() == "@scope/other" && s.reason == SkipReason::Untrusted)
+        );
+    }
+
+    #[test]
+    fn cli_trust_does_not_apply_to_npm_donors() {
+        // `--trust` is composer-grammar; a scoped npm name cannot be expressed
+        // by it, so an npm donor is not approved via the CLI list.
+        let (_tmp, ctx) = ctx_with(
+            "{}",
+            RunOptions {
+                trust: patterns(&["scope/thing"]),
+                ..Default::default()
+            },
+        );
+        let outcome = trust_filter(
+            &ctx,
+            vec![npm_donor(
+                "@scope/thing",
+                TrustBasis::Transitive,
+                DonorStatus::Declared,
+            )],
+        )
+        .unwrap();
+        assert!(outcome.kept.is_empty());
+        assert_eq!(outcome.skipped[0].reason, SkipReason::Untrusted);
     }
 }

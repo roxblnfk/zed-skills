@@ -16,6 +16,7 @@ pub mod github;
 pub mod gitlab;
 pub mod http;
 pub mod locate;
+pub mod npm;
 pub mod refresolver;
 mod remote;
 pub mod testkit;
@@ -31,5 +32,6 @@ pub use http::{HttpClient, HttpError, HttpResponse, MockHttp, ReqwestClient};
 pub use locate::{
     ComposerDeclaredLocator, DeclaredLocator, RecursiveFallbackLocator, WellKnownLocator,
 };
+pub use npm::{NpmProvider, NpmVendor};
 pub use remote::normalize_host;
 pub use url::{UrlProvider, UrlVendor};

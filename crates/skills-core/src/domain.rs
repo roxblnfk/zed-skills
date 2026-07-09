@@ -59,6 +59,7 @@ impl fmt::Display for VendorName {
 pub enum ProviderId {
     Dir,
     Composer,
+    Npm,
     Github,
     Gitlab,
     /// By-url source entries (`from: http|zip`).
@@ -70,9 +71,26 @@ impl ProviderId {
         match self {
             ProviderId::Dir => "dir",
             ProviderId::Composer => "composer",
+            ProviderId::Npm => "npm",
             ProviderId::Github => "github",
             ProviderId::Gitlab => "gitlab",
             ProviderId::Url => "url",
+        }
+    }
+
+    /// The package-manager id whose per-manager trust list governs this
+    /// provider's donors, or `None` for providers that are not manager-scoped.
+    ///
+    /// Only local-provider donors (`composer`, `npm`) are matched against a
+    /// trust list, and each is matched only against *its own* manager's list.
+    /// `sources[]` providers (`dir`/`github`/`gitlab`/`url`) are
+    /// [`TrustBasis::UserDeclared`] and approved before any list check, so they
+    /// have no trust manager.
+    pub fn trust_manager(&self) -> Option<&'static str> {
+        match self {
+            ProviderId::Composer => Some("composer"),
+            ProviderId::Npm => Some("npm"),
+            ProviderId::Dir | ProviderId::Github | ProviderId::Gitlab | ProviderId::Url => None,
         }
     }
 }
