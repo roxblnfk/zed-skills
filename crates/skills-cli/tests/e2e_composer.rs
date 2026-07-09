@@ -76,37 +76,6 @@ fn untrusted_vendor_is_skipped_by_default_and_mentioned_in_skip_block() {
 }
 
 #[test]
-fn trust_flag_allows_untrusted_vendor() {
-    let project = fixture_project("sandbox");
-    skills_cmd(project.path())
-        .args(["update", "--trust=evil/payload"])
-        .assert()
-        .success();
-    assert!(has_skill(project.path(), "tutorial"));
-}
-
-#[test]
-fn trust_flag_vendor_wildcard_allows_all_packages_under_it() {
-    let project = fixture_project("sandbox");
-    skills_cmd(project.path())
-        .args(["update", "--trust=evil/*"])
-        .assert()
-        .success();
-    assert!(has_skill(project.path(), "tutorial"));
-}
-
-#[test]
-fn invalid_trust_pattern_is_a_usage_error() {
-    let project = fixture_project("sandbox");
-    let assert = skills_cmd(project.path())
-        .args(["update", "--trust=evil"])
-        .assert()
-        .failure()
-        .code(1);
-    assert!(stderr_of(assert).contains("invalid vendor pattern"));
-}
-
-#[test]
 fn naming_untrusted_vendor_positionally_trusts_it_silently() {
     let project = fixture_project("sandbox");
     let assert = skills_cmd(project.path())
@@ -422,12 +391,11 @@ fn undeclared_but_untrusted_donors_are_not_synced_and_get_no_hint() {
 #[test]
 fn undeclared_skills_of_a_trusted_vendor_are_synced() {
     let project = fixture_project("sandbox");
-    let out = stdout_of(
-        skills_cmd(project.path())
-            .args(["update", "--trust=acme/skills-undeclared"])
-            .assert()
-            .success(),
+    set_manifest(
+        project.path(),
+        r#"{ "dependencies": { "composer": { "trusted": ["acme/skills-undeclared"] } } }"#,
     );
+    let out = stdout_of(skills_cmd(project.path()).arg("update").assert().success());
     assert!(has_skill(project.path(), "auto-skill"));
     assert!(!out.contains("--discovery"), "{out}");
 }
@@ -435,10 +403,11 @@ fn undeclared_skills_of_a_trusted_vendor_are_synced() {
 #[test]
 fn discovery_finds_dot_claude_and_catalog_layout_of_undeclared_package() {
     let project = fixture_project("sandbox");
-    skills_cmd(project.path())
-        .args(["update", "--trust=nested/*"])
-        .assert()
-        .success();
+    set_manifest(
+        project.path(),
+        r#"{ "dependencies": { "composer": { "trusted": ["nested/*"] } } }"#,
+    );
+    skills_cmd(project.path()).arg("update").assert().success();
     assert!(has_skill(project.path(), "hidden-claude"));
     assert!(has_skill(project.path(), "hidden-catalog"));
 }
@@ -451,10 +420,11 @@ fn recursive_fallback_skills_are_synced_when_trusted() {
     skills_cmd(project.path()).arg("update").assert().success();
     assert!(!has_skill(project.path(), "weird-place"));
 
-    skills_cmd(project.path())
-        .args(["update", "--trust=oddball/*"])
-        .assert()
-        .success();
+    set_manifest(
+        project.path(),
+        r#"{ "dependencies": { "composer": { "trusted": ["oddball/*"] } } }"#,
+    );
+    skills_cmd(project.path()).arg("update").assert().success();
     assert!(has_skill(project.path(), "weird-place"));
 }
 
@@ -609,12 +579,11 @@ fn show_lists_undeclared_untrusted_donor_as_untrusted_without_hint() {
 #[test]
 fn show_promotes_trusted_undeclared_donor_with_discovered_mark() {
     let project = fixture_project("sandbox");
-    let out = stdout_of(
-        skills_cmd(project.path())
-            .args(["show", "--trust=acme/skills-undeclared"])
-            .assert()
-            .success(),
+    set_manifest(
+        project.path(),
+        r#"{ "dependencies": { "composer": { "trusted": ["acme/skills-undeclared"] } } }"#,
     );
+    let out = stdout_of(skills_cmd(project.path()).arg("show").assert().success());
     let undeclared = out
         .lines()
         .find(|l| l.contains("acme/skills-undeclared"))

@@ -15,15 +15,13 @@ use crate::traits::Cache;
 /// content. Created lazily; unused by local providers.
 pub const CACHE_DIR: &str = ".skills-cache";
 
-/// Per-invocation options that shape the run (positional filters, trust
-/// grants). Lives in [`Ctx`] so the TrustFilter stage can consult it.
+/// Per-invocation options that shape the run (positional filters). Lives in
+/// [`Ctx`] so the TrustFilter stage can consult it.
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
     /// Positional `PACKAGE` / `VENDOR/*` arguments: filter + implicit trust.
     /// Empty = all donors.
     pub packages: Vec<VendorPattern>,
-    /// `--trust=PATTERN` entries, added on top of project + builtin lists.
-    pub trust: Vec<VendorPattern>,
     /// A `--from=ID` provider scope is active: donors outside the scope keep
     /// their lockfile entries instead of being pruned.
     pub scoped: bool,
@@ -81,7 +79,7 @@ pub struct PrepareOptions {
     pub dry_run: bool,
     /// CLI `--refresh`: force re-download of cached remote archives.
     pub refresh: bool,
-    /// Per-invocation filters and trust grants.
+    /// Per-invocation filters.
     pub run: RunOptions,
 }
 

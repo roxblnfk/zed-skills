@@ -18,8 +18,8 @@ spiral/skills-demo:
 5 added, 0 updated, 0 removed, 0 up to date.
 
 [warn] acme/skills-broken: extra.skills.source must not escape the package root (donor skipped)
-[skip] acme/skills-undeclared: untrusted package not synced (add it to "dependencies.composer.trusted" in skills.json or rerun with --trust=acme/skills-undeclared)
-[skip] clash/skills-conflict: untrusted package not synced (add it to "dependencies.composer.trusted" in skills.json or rerun with --trust=clash/skills-conflict)
-[skip] evil/payload: untrusted package not synced (add it to "dependencies.composer.trusted" in skills.json or rerun with --trust=evil/payload)
-[skip] nested/skills-tree: untrusted package not synced (add it to "dependencies.composer.trusted" in skills.json or rerun with --trust=nested/skills-tree)
-[skip] oddball/loose-skills: untrusted package not synced (add it to "dependencies.composer.trusted" in skills.json or rerun with --trust=oddball/loose-skills)
+[skip] acme/skills-undeclared: untrusted package not synced (add it to "dependencies.composer.trusted" in skills.json)
+[skip] clash/skills-conflict: untrusted package not synced (add it to "dependencies.composer.trusted" in skills.json)
+[skip] evil/payload: untrusted package not synced (add it to "dependencies.composer.trusted" in skills.json)
+[skip] nested/skills-tree: untrusted package not synced (add it to "dependencies.composer.trusted" in skills.json)
+[skip] oddball/loose-skills: untrusted package not synced (add it to "dependencies.composer.trusted" in skills.json)

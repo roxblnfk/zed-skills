@@ -38,9 +38,9 @@ pub async fn run(cwd: &Path, from: Option<String>, filters: RawFilters) -> Resul
         match kept.trust_source {
             Some(TrustSource::Builtin) => chips.push("[builtin]"),
             Some(TrustSource::DirectDep) => chips.push("[direct-dep]"),
-            // Project/CLI-trusted donors are not annotated: the user's own
+            // Project-trusted donors are not annotated: the user's own
             // explicit decision needs no callout.
-            Some(TrustSource::Project) | Some(TrustSource::Cli) | None => {}
+            Some(TrustSource::Project) | None => {}
         }
         // A `sources[]` donor is trusted because it is declared in
         // skills.json — labeled so a coincidentally-matching trust-list entry

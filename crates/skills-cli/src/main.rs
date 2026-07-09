@@ -73,10 +73,6 @@ enum Command {
         /// chain for every skill.
         #[arg(long)]
         re_audit: bool,
-        /// Extra trusted vendor pattern on top of the built-in and project
-        /// lists (repeatable).
-        #[arg(long = "trust", value_name = "PATTERN")]
-        trust: Vec<String>,
     },
     /// List donors and skills with their sync status. Read-only.
     Show {
@@ -88,9 +84,6 @@ enum Command {
         /// gitlab, url).
         #[arg(long, value_name = "ID")]
         from: Option<String>,
-        /// Extra trusted vendor pattern (repeatable).
-        #[arg(long = "trust", value_name = "PATTERN")]
-        trust: Vec<String>,
     },
     /// Run the language server over stdio (diagnostics for skills.json and
     /// SKILL.md; editors launch this, not humans).
@@ -203,7 +196,6 @@ async fn main() -> ExitCode {
             from,
             refresh,
             re_audit,
-            trust,
         } => {
             commands::update::run(
                 &cwd,
@@ -214,15 +206,13 @@ async fn main() -> ExitCode {
                 from,
                 refresh,
                 re_audit,
-                commands::RawFilters { packages, trust },
+                commands::RawFilters { packages },
             )
             .await
         }
-        Command::Show {
-            packages,
-            from,
-            trust,
-        } => commands::show::run(&cwd, from, commands::RawFilters { packages, trust }).await,
+        Command::Show { packages, from } => {
+            commands::show::run(&cwd, from, commands::RawFilters { packages }).await
+        }
         Command::Lsp => commands::lsp::run().await,
         Command::Add {
             input,

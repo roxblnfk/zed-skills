@@ -221,7 +221,6 @@ async fn sync_after_add(cwd: &Path) -> Result<(), CliError> {
         false,
         super::RawFilters {
             packages: Vec::new(),
-            trust: Vec::new(),
         },
     )
     .await

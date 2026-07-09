@@ -22,8 +22,6 @@ use crate::CliError;
 pub(crate) struct RawFilters {
     /// Positional `PACKAGE` / `VENDOR/*` arguments.
     pub packages: Vec<String>,
-    /// `--trust=PATTERN` values.
-    pub trust: Vec<String>,
 }
 
 impl RawFilters {
@@ -32,7 +30,6 @@ impl RawFilters {
     pub fn into_run_options(self, scoped: bool) -> Result<RunOptions, CliError> {
         Ok(RunOptions {
             packages: parse_patterns(&self.packages, "package argument")?,
-            trust: parse_patterns(&self.trust, "--trust value")?,
             scoped,
             re_audit: false,
         })
