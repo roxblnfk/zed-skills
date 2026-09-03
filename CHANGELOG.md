@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.0](https://github.com/roxblnfk/zed-skills/compare/v0.3.1...v0.4.0) (2026-07-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove the --trust CLI flag
+* remove the discovery flag - discovery is always on
+* replace local/trusted with a per-manager dependencies block
+* migrate the manifest to sources[] (upstream schema parity)
+
+### Features
+
+* add the npm dependency provider ([c5b8383](https://github.com/roxblnfk/zed-skills/commit/c5b8383264c7f10906712b8b56ef631432710ad4))
+* **audit:** warn on SKILL.md frontmatter missing the required `name` ([2d43c02](https://github.com/roxblnfk/zed-skills/commit/2d43c02e06094360fd643ccf7732d3707fbefa58))
+* migrate the manifest to sources[] (upstream schema parity) ([f31548b](https://github.com/roxblnfk/zed-skills/commit/f31548b46e06f7f228cbf77970c54a3ddcfc5cf3))
+* port the dir-adapter behavior from upstream PR [#29](https://github.com/roxblnfk/zed-skills/issues/29) ([b94dce0](https://github.com/roxblnfk/zed-skills/commit/b94dce08a6626619e8cdbf8652d5955a19744f5d))
+* remove the --trust CLI flag ([a6f3d0c](https://github.com/roxblnfk/zed-skills/commit/a6f3d0ceee77d5f1a7a7c2450413614a71556050))
+* remove the discovery flag - discovery is always on ([f8dfdb5](https://github.com/roxblnfk/zed-skills/commit/f8dfdb5b6255f1304dc18dc09fd3b040f19bf028))
+* replace local/trusted with a per-manager dependencies block ([b33a8f3](https://github.com/roxblnfk/zed-skills/commit/b33a8f3b3327a3598bf27c1b9f4e9fdf644796af))
+* **trust:** ship built-in trusted lists for npm and go ([16dc823](https://github.com/roxblnfk/zed-skills/commit/16dc823e324c3cd51d02bebf39108dc552be0645))
+
 ## [0.3.1](https://github.com/roxblnfk/zed-skills/compare/v0.3.0...v0.3.1) (2026-07-07)
 
 
